@@ -26,11 +26,24 @@ yarn-debug.log*
 yarn-error.log*
 
 # local env files
+.env
 .env*.local
 
 # vercel
 .vercel
 
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+# python
+venv/
+__pycache__/
+*.pyc
+
+# debug
+gemini_debug.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# build
+/.next/
+/out/
+/build
