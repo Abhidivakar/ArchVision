@@ -51,7 +51,7 @@ CRITICAL: The 'simulation_parameters' array should contain 3 to 5 relevant metri
 `;
 
 export async function analyzeArchitecture(imageBuffer: Buffer, mimeType: string) {
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
   const result = await model.generateContent([
     INTERACTIVE_PROMPT,
@@ -65,19 +65,19 @@ export async function analyzeArchitecture(imageBuffer: Buffer, mimeType: string)
 
   const response = await result.response;
   let text = response.text();
-  
+
   // Clean up potential markdown formatting
   text = text.replace(/^```json\s*/, "").replace(/```$/, "").trim();
-  
+
   return JSON.parse(text);
 }
 
-export async function simulateWorkload(architectureJson: any, simulationState: any, options: { 
-  scenarioPreset?: string, 
-  failureSimulation?: string[], 
-  isMultiRegion?: boolean 
+export async function simulateWorkload(architectureJson: any, simulationState: any, options: {
+  scenarioPreset?: string,
+  failureSimulation?: string[],
+  isMultiRegion?: boolean
 }) {
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
   const archServices = architectureJson.components?.map((c: any) => c.service).filter(Boolean) || [];
   const stateStr = Object.entries(simulationState)
@@ -146,8 +146,8 @@ Return a STRICT JSON response exactly matching this structure (fill in the data 
   const result = await model.generateContent(prompt);
   const response = await result.response;
   let text = response.text();
-  
+
   text = text.replace(/^```json\s*/, "").replace(/```$/, "").trim();
-  
+
   return JSON.parse(text);
 }

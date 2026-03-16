@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
 
     let focus = "Balanced, thorough documentation.";
     let sections = "- Executive Summary\n- Architecture Analysis\n- Security Implementation";
-    
+
     if (docType === "Standard") {
       focus = "Cost-efficiency, flexibility, and comprehensive documentation.";
       sections = "- Executive Summary\n- Business Requirements\n- Architecture Analysis\n- Security Implementation\n- Detailed Cost Analysis\n- Performance and Scalability\n- Deployment and Operations\n- Monitoring and Maintenance\n- Risk Assessment\n- Implementation Roadmap";
@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
     const tableHints = SECTION_TABLE_HINTS[docType] || {};
     const prompt = buildPrompt(docType, environment, sections, focus, tableHints);
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContent([prompt, imagePart]);
     let text = result.response.text();
     text = text.replace(/^```json\s*/, "").replace(/```$/, "").trim();
@@ -178,8 +178,8 @@ export async function POST(request: NextRequest) {
             ]
           }),
           new Paragraph({
-             border: { bottom: { color: BRAND_BLUE, size: 6, style: BorderStyle.SINGLE } },
-             spacing: { before: 200, after: 400 }
+            border: { bottom: { color: BRAND_BLUE, size: 6, style: BorderStyle.SINGLE } },
+            spacing: { before: 200, after: 400 }
           }),
           new Paragraph({
             alignment: AlignmentType.CENTER,
@@ -214,51 +214,51 @@ export async function POST(request: NextRequest) {
               spacing: { before: 400, after: 200 }
             }),
             ...(section.content || []).map((block: any) => {
-               if (block.type === "paragraph") {
-                 return new Paragraph({ children: createFormattedText(block.text), spacing: { after: 140 } });
-               }
-               if (block.type === "subheading") {
-                 return new Paragraph({ text: block.text, heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 80 } });
-               }
-               if (block.type === "bullet_list") {
-                 return (block.items || []).map((item: string) => new Paragraph({
-                   children: createFormattedText(item),
-                   bullet: { level: 0 },
-                   spacing: { after: 60 }
-                 }));
-               }
-               if (block.type === "note") {
-                 return new Paragraph({
-                   children: [
-                     new TextRun({ text: "ℹ  Note: ", bold: true, color: BRAND_BLUE }),
-                     ...createFormattedText(block.text)
-                   ],
-                   shading: { fill: NOTE_BG, type: ShadingType.CLEAR, color: "auto" },
-                   spacing: { before: 120, after: 120 }
-                 });
-               }
-               if (block.type === "table") {
-                 return [
-                   new Table({
-                     width: { size: 100, type: WidthType.PERCENTAGE },
-                     rows: [
-                       new TableRow({
-                         children: (block.headers || []).map((h: string) => new TableCell({
-                           children: [new Paragraph({ children: [new TextRun({ text: h, color: "FFFFFF", bold: true })] })],
-                           shading: { fill: BRAND_BLUE }
-                         }))
-                       }),
-                       ...(block.rows || []).map((row: string[]) => new TableRow({
-                         children: row.map(cell => new TableCell({
-                           children: [new Paragraph({ text: cell })]
-                         }))
-                       }))
-                     ]
-                   }),
-                   new Paragraph({ text: "", spacing: { after: 200 } })
-                 ];
-               }
-               return new Paragraph({ text: JSON.stringify(block) });
+              if (block.type === "paragraph") {
+                return new Paragraph({ children: createFormattedText(block.text), spacing: { after: 140 } });
+              }
+              if (block.type === "subheading") {
+                return new Paragraph({ text: block.text, heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 80 } });
+              }
+              if (block.type === "bullet_list") {
+                return (block.items || []).map((item: string) => new Paragraph({
+                  children: createFormattedText(item),
+                  bullet: { level: 0 },
+                  spacing: { after: 60 }
+                }));
+              }
+              if (block.type === "note") {
+                return new Paragraph({
+                  children: [
+                    new TextRun({ text: "ℹ  Note: ", bold: true, color: BRAND_BLUE }),
+                    ...createFormattedText(block.text)
+                  ],
+                  shading: { fill: NOTE_BG, type: ShadingType.CLEAR, color: "auto" },
+                  spacing: { before: 120, after: 120 }
+                });
+              }
+              if (block.type === "table") {
+                return [
+                  new Table({
+                    width: { size: 100, type: WidthType.PERCENTAGE },
+                    rows: [
+                      new TableRow({
+                        children: (block.headers || []).map((h: string) => new TableCell({
+                          children: [new Paragraph({ children: [new TextRun({ text: h, color: "FFFFFF", bold: true })] })],
+                          shading: { fill: BRAND_BLUE }
+                        }))
+                      }),
+                      ...(block.rows || []).map((row: string[]) => new TableRow({
+                        children: row.map(cell => new TableCell({
+                          children: [new Paragraph({ text: cell })]
+                        }))
+                      }))
+                    ]
+                  }),
+                  new Paragraph({ text: "", spacing: { after: 200 } })
+                ];
+              }
+              return new Paragraph({ text: JSON.stringify(block) });
             }).flat()
           ])
         ]
