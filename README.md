@@ -1,84 +1,72 @@
 # ArchVision 🌌
 
-**ArchVision** is an AI-powered cloud architecture analyzer and traffic simulation engine. Upload your architecture diagrams (images) or Word documents, and let AI transform them into interactive, data-driven insights.
+**ArchVision** is an AI-powered cloud architecture analyzer and traffic simulation engine. Transform your architecture diagrams (images) into interactive, data-driven dashboards with native Next.js API Routes.
 
-![ArchVision Dashboard](C:\Users\abhis\.gemini\antigravity\brain\8becf4ae-90da-4958-b45f-0a81b84579b5\clean_simulation_report_top_1773663344712.png)
+![ArchVision Dashboard](https://raw.githubusercontent.com/Abhidivakar/ArchVision/main/docs/dashboard_preview.png)
 
 ## 🚀 Key Features
 
-- **🧠 AI-Architecture Discovery**: Instantly detects cloud components, services, and connections from any diagram image using Gemini 2.5 Flash.
-- **📈 Traffic Simulation Engine (v2.0)**: Simulate real-world workloads (RPS) and see how your infrastructure scales, where it breaks, and what it will cost.
-- **🌡️ Latency Heatmaps**: Dynamic hotspots that change color (Green/Yellow/Red) based on predicted service performance tiers.
-- **🏢 Infrastructure Logic**:
-  * **Right-Sizing**: Specific instance upgrade/downgrade recommendations.
-  * **Regional Splits**: granular cost analysis for Multi-Region deployments.
-  * **Bottleneck Linking**: Click a report warning to highlight the specific component on your map.
-- **📄 Professional Exports**: Export your full analysis and simulation data to high-quality **PDF reports** or raw **CSV data**.
-- **✨ Futuristic UI**: A high-performance dashboard built with Next.js 14, Tailwind CSS, and sleek glassmorphism aesthetics.
+- **🧠 AI-Architecture Discovery**: Instantly detects cloud components and connections from diagrams using Gemini AI.
+- **📈 Traffic Simulation Engine**: Simulate real-world workloads and visualize infrastructure scaling, bottlenecks, and costs.
+- **🌡️ Latency Heatmaps**: Dynamic hotspots that change color based on predicted performance tiers.
+- **🏢 Infrastructure Insights**: Right-sizing recommendations, regional cost splits, and actionable optimization strategies.
+- **📄 Professional Exports**: Generate professional Word/DOCX architecture documents natively.
+- **✨ Unified Backend**: Now fully integrated into Next.js—deploy once to Netlify and it "just works."
 
 ## 🛠️ Tech Stack
 
-- **Frontend**: Next.js 14 (App Router), TypeScript, Tailwind CSS, Framer Motion.
-- **Backend**: FastAPI (Python), Google Generative AI (Gemini), Uvicorn.
-- **Deployment**: Optimized for Netlify (Frontend) and Cloud Run/Railway (Backend).
+- **Frontend/API**: Next.js 14 (App Router), TypeScript, Tailwind CSS, docx.
+- **AI**: Google Generative AI Node SDK (Gemini 1.5 Flash).
+- **Styling**: Sleek Glassmorphism with Framer Motion.
+- **Deployment**: Optimized for **Netlify** (All-in-one).
 
 ## 🏃 Local Development
 
-### 1. Backend Setup (FastAPI)
-
-```bash
-# Create and activate virtual environment
-python -m venv venv
-.\venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Start the backend
-python main.py
+### 1. Environment Setup
+Create a `.env` file in the root directory:
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-The backend will run on `http://localhost:8000`.
-
-### 2. Frontend Setup (Next.js)
-
+### 2. Install & Run
 ```bash
 # Install dependencies
 npm install
 
-# Build environment (Create .env from .env.example)
-# Add your GOOGLE_API_KEY
-
-# Start dev server
+# Start development server
 npm run dev
 ```
+Navigate to `http://localhost:3000`.
 
-The application will be available at `http://localhost:3000`.
+---
 
-## 🌐 Deployment
+## 🌐 Deployment (Netlify)
 
-### Frontend (Netlify)
+ArchVision is now optimized for a **single-click deployment** on Netlify.
 
-1. Push your code to GitHub.
-2. Connect the repository to Netlify.
-3. Set the following Environment Variables in the Netlify Dashboard:
-   * `BACKEND_URL`: The URL of your deployed Python backend.
+1. **Push to GitHub**: Connect your repository to Netlify.
+2. **Environment Variables**: In the Netlify Dashboard, add:
+   - `GEMINI_API_KEY`: Your Google AI Studio API key.
+3. **Build Settings**:
+   - Build Command: `npm run build`
+   - Publish Directory: `.next`
+4. **Proxy**: The app no longer requires a separate Python backend for deployment!
 
-### Backend (Cloud Run / Railway / Render)
+---
 
-1. Deploy the `main.py` using your preferred Python host.
-2. Ensure you provide the `GOOGLE_API_KEY` in the environment.
-3. The backend is configured to bind to the `$PORT` environment variable automatically.
+## 🐍 Legacy Python Backend (Optional)
+The original `main.py` is preserved for users who prefer a standalone Python FastAPI server.
 
-## 📋 Environment Variables
+```bash
+# Setup venv
+python -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
 
-Create a `.env` file in the root directory:
-
-```env
-GOOGLE_API_KEY=your_gemini_api_key_here
-BACKEND_URL=http://localhost:8000
+# Run
+python main.py
 ```
 
 ---
 
-Built with ❤️ by the Abhishek Divakar.
+Built with ❤️ by Abhishek Divakar.

@@ -51,7 +51,7 @@ CRITICAL: The 'simulation_parameters' array should contain 3 to 5 relevant metri
 `;
 
 export async function analyzeArchitecture(imageBuffer: Buffer, mimeType: string) {
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
   const result = await model.generateContent([
     INTERACTIVE_PROMPT,
@@ -77,7 +77,7 @@ export async function simulateWorkload(architectureJson: any, simulationState: a
   failureSimulation?: string[],
   isMultiRegion?: boolean
 }) {
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
   const archServices = architectureJson.components?.map((c: any) => c.service).filter(Boolean) || [];
   const stateStr = Object.entries(simulationState)
