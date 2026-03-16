@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
     const tableHints = SECTION_TABLE_HINTS[docType] || {};
     const prompt = buildPrompt(docType, environment, sections, focus, tableHints);
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
     const result = await model.generateContent([prompt, imagePart]);
     let text = result.response.text();
     text = text.replace(/^```json\s*/, "").replace(/```$/, "").trim();
