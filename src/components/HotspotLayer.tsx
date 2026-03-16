@@ -13,9 +13,9 @@ interface HotspotLayerProps {
   components: ArchComponent[];
   imageRef: React.RefObject<HTMLImageElement | null>;
   onSelect: (comp: ArchComponent) => void;
-  activeId?: string;
-  bottleneckIds?: string[];
-  latencyData?: { tier: string; latency_ms: number }[];
+  activeId?: string | null;
+  bottleneckIds?: string[] | null;
+  latencyData?: { tier: string; latency_ms: number }[] | null;
   trafficVolume?: number; // 0 to 1
 }
 
@@ -131,12 +131,12 @@ const HotspotLayer: React.FC<HotspotLayerProps> = ({
       style={{ zIndex: 20 }}
     >
       {hotspots.map(({ comp, px, py }) => {
-        const isBottleneck = bottleneckIds.includes(comp.id);
+        const isBottleneck = (bottleneckIds ?? []).includes(comp.id);
         const isActive = activeId === comp.id;
 
         // Latency tier logic
         // We match component service keywords to latency tiers
-        const tierMatch = latencyData.find(
+        const tierMatch = (latencyData ?? []).find(
           (td) =>
             comp.service.toLowerCase().includes(td.tier.toLowerCase()) ||
             comp.name.toLowerCase().includes(td.tier.toLowerCase())
