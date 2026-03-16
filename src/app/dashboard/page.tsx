@@ -55,19 +55,25 @@ export default function DashboardPage() {
       router.push("/");
       return;
     }
-    const parsed = JSON.parse(raw);
-    setData(parsed.data);
-    setImageUrl(parsed.imageUrl);
+      try {
+        const parsed = JSON.parse(raw);
+        setData(parsed.data);
+        setImageUrl(parsed.imageUrl);
 
-    // Initialize Simulation State
-    if (parsed.data.simulation_parameters) {
-      const initial: Record<string, number> = {};
-      parsed.data.simulation_parameters.forEach((p: any) => {
-        initial[p.id] = p.default_value;
-      });
-      setSimulationState(initial);
-    }
-  }, [router]);
+        // Initialize Simulation State
+        if (parsed.data.simulation_parameters) {
+          const initial: Record<string, number> = {};
+          parsed.data.simulation_parameters.forEach((p: any) => {
+            initial[p.id] = p.default_value;
+          });
+          setSimulationState(initial);
+        }
+      } catch (e) {
+        console.error("Dashboard Parse Error:", e);
+        sessionStorage.removeItem("archData");
+        router.push("/");
+      }
+    }, [router]);
 
   const handleSelectComp = (comp: ArchComponent) => {
     setActiveComp(comp);
