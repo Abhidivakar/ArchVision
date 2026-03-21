@@ -184,3 +184,22 @@ input[type='range']::-webkit-slider-thumb:hover {
 .select-btn.active {
   @apply bg-blue-600/20 border-blue-500/50 text-blue-300;
 }
+
+/* Terraform validation animation */
+@keyframes blink-green {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(16, 185, 129, 0.4);
+    border-color: rgba(16, 185, 129, 0.5);
+    background-color: rgba(16, 185, 129, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.8);
+    border-color: rgba(16, 185, 129, 1);
+    background-color: rgba(16, 185, 129, 0.5);
+    transform: scale(1.15);
+  }
+}
+
+.animate-blink-green {
+  animation: blink-green 2s infinite ease-in-out;
+}

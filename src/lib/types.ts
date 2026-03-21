@@ -8,6 +8,8 @@ export interface ArchComponent {
   box_2d?: [number, number, number, number]; // [ymin, xmin, ymax, xmax] 0-1000
   center_point?: [number, number]; // [y, x] 0-1000
   bounding_box?: [number, number, number, number];
+  dependencies: string[]; // IDs of components this service interacts with
+  zone?: string; // 'Public', 'Private', 'Restricted', etc.
 }
 
 export interface SimulationParameter {
@@ -83,3 +85,11 @@ export interface SimulationReport {
   infrastructure_limits: InfrastructureLimit[];
 }
 
+export interface CalibrationOverride {
+  x: number;
+  y: number;
+  ymin: number;
+  xmin: number;
+  ymax: number;
+  xmax: number;
+}

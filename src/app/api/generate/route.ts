@@ -4,9 +4,6 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const dynamic = "force-dynamic";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
-
-// --- CONSTANTS ---
 const BRAND_BLUE = "1A73E8";
 const BRAND_DARK = "202124";
 const BRAND_GREY = "5F6368";
@@ -15,74 +12,7 @@ const ALT_ROW_BG = "F1F3F4";
 const NOTE_BG = "E8F0FE";
 const RULE_LIGHT = "E0E0E0";
 
-// --- SCHEMAS ---
-const BLOCK_SCHEMA = `
-Each section's "content" MUST be a JSON array of typed block objects. ONLY these types are allowed:
-
-  { "type": "paragraph",     "text": "One or two sentences of essential context only." }
-  { "type": "subheading",    "text": "Sub-section title" }
-  { "type": "bullet_list",   "items": ["Concise item 1", "Concise item 2", "Concise item 3"] }
-  { "type": "numbered_list", "items": ["Step 1", "Step 2", "Step 3"] }
-  { "type": "table",         "headers": ["Col A", "Col B", "Col C"], "rows": [["r1c1","r1c2","r1c3"]] }
-  { "type": "note",          "text": "Important advisory or key takeaway." }
-
-STRICT CONTENT RULES:
-  1. Do NOT use long prose paragraphs. Most information should be in bullet_list or table blocks.
-  2. A "paragraph" block must be at most 2 sentences. Long essays are forbidden.
-  3. Each main section MUST start with a "paragraph" (2-sentence overview) then immediately use "subheading" + "bullet_list" or "table" blocks for ALL details.
-  4. Every section MUST contain at least 2 "subheading" blocks and at least 3 "bullet_list" blocks.
-  5. Do NOT embed markdown (**, ##, ---) inside text strings.
-  6. Bullet list items may use **bold** for a keyword at the start.
-`;
-
-const SECTION_TABLE_HINTS: Record<string, any> = {
-  "Standard": {
-    "Architecture Analysis": {
-      "headers": ["Component", "GCP Service", "Role / Purpose", "Tier"],
-      "note": "Add one row per component visible in the architecture diagram."
-    },
-    "Detailed Cost Analysis and Optimization": {
-      "headers": ["Component", "GCP Service", "Est. Monthly Cost (Dev)", "Optimization Action"],
-      "note": "Provide REALISTIC cost estimates. Use ranges like '$5 – $15'."
-    }
-  }
-};
-
 // --- HELPERS ---
-function buildPrompt(docType: string, environment: string, sections: string, focus: string, tableHints: any) {
-  return `
-    You are an expert Cloud Solutions Architect specializing in architecture documentation.
-    Analyze the provided architecture diagram.
-    Your task is to generate the full content for an architecture document.
-    
-    DOCUMENT METADATA:
-    - Type: ${docType}
-    - Environment: ${environment}
-    - Focus Area: ${focus}
-    
-    REQUIRED SECTIONS:
-    ${sections}
-    
-    ${BLOCK_SCHEMA}
-    
-    SECTION-SPECIFIC TABLE HINTS:
-    ${JSON.stringify(tableHints, null, 2)}
-    
-    Return a STRICT JSON response:
-    {
-      "title": "A professional name for this architecture",
-      "sections": [
-        {
-          "heading": "Section Name (Must match one of the Required Sections)",
-          "content": [ ...blocks... ]
-        }
-      ]
-    }
-    
-    CRITICAL: Ensure the JSON is valid and perfectly structured. Do not include any text outside the JSON.
-  `;
-}
-
 function parseMarkdown(text: string): any[] {
   const blocks: any[] = [];
   const lines = text.split("\n");
@@ -134,28 +64,8 @@ export async function POST(request: NextRequest) {
       }
     };
 
-    let focus = "Balanced, thorough documentation.";
-    let sections = "- Executive Summary\n- Architecture Analysis\n- Security Implementation";
-
-    if (docType === "Standard") {
-      focus = "Cost-efficiency, flexibility, and comprehensive documentation.";
-      sections = "- Executive Summary\n- Business Requirements\n- Architecture Analysis\n- Security Implementation\n- Detailed Cost Analysis\n- Performance and Scalability\n- Deployment and Operations\n- Monitoring and Maintenance\n- Risk Assessment\n- Implementation Roadmap";
-    } else if (docType === "Technical") {
-      focus = "Engineering depth: patterns, network, security, and bottlenecks.";
-      sections = "- Architecture Analysis\n- Security Implementation\n- Performance and Scalability\n- Deployment and Operations\n- Monitoring and Maintenance";
-    } else if (docType === "Business") {
-      focus = "Business value, cost, risks, and strategic roadmap.";
-      sections = "- Executive Summary\n- Business Requirements\n- Detailed Cost Analysis\n- Risk Assessment\n- Implementation Roadmap";
-    }
-
-    const tableHints = SECTION_TABLE_HINTS[docType] || {};
-    const prompt = buildPrompt(docType, environment, sections, focus, tableHints);
-
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-    const result = await model.generateContent([prompt, imagePart]);
-    let text = result.response.text();
-    text = text.replace(/^```json\s*/, "").replace(/```$/, "").trim();
-    const parsedData = JSON.parse(text);
+    const { generateDocumentContent } = await import("@/lib/gemini");
+    const parsedData = await generateDocumentContent(buffer, file.type || "image/png", docType, environment);
 
     const title = parsedData.title || `${docType} Architecture – ${environment}`;
     const sectionsData = parsedData.sections || [];

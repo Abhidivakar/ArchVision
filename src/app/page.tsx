@@ -3,6 +3,10 @@
 import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { generateDoc, generateInteractive } from "@/lib/api";
+import { playSuccessSound } from "@/lib/audio";
+import { requestNotificationPermission, sendNotification } from "@/lib/notifications";
+import { useEffect } from "react";
+
 
 const DOC_TYPES = ["Standard", "Business", "Technical", "Executive"];
 const ENVIRONMENTS = ["Development", "Staging", "Production"];
@@ -16,6 +20,10 @@ export default function HomePage() {
   const [environment, setEnvironment] = useState("Development");
   const [loading, setLoading] = useState<"docx" | "interactive" | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    requestNotificationPermission();
+  }, []);
 
   const handleFile = useCallback((f: File) => {
     setFile(f);
@@ -44,10 +52,16 @@ export default function HomePage() {
       const blob = await generateDoc(file, docType, environment);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
+      a.style.display = "none";
       a.href = url;
       a.download = `Architecture_${docType}_${environment}.docx`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+      sendNotification("Document Generated", `Your ${docType} documentation is ready for download.`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to generate document");
     } finally {
@@ -60,13 +74,55 @@ export default function HomePage() {
     setLoading("interactive");
     setError(null);
     try {
+      const isVector = file.name.endsWith(".svg") || file.name.endsWith(".drawio") || file.name.endsWith(".xml");
+      let vectorNodes: any[] = [];
+      
+      if (isVector) {
+        const { parseVectorFile } = await import("@/lib/vectorParser");
+        vectorNodes = await parseVectorFile(file);
+        console.log("Extracted Vector Nodes:", vectorNodes);
+      }
+
+      // Still call Gemini for the "Intelligence" layer
+      // For SVG, we can send it as-is or rasterize. generateInteractive handles the file.
       const data = await generateInteractive(file);
-      const imageUrl = URL.createObjectURL(file);
+      // Convert file to Data URL for persistence across refreshes
+      const reader = new FileReader();
+      const imageUrl = await new Promise<string>((resolve) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+
+      // HYBRID MERGE: If we have vector nodes, try to match them with Gemini's components
+      // to provide 100% precise coordinates.
+      if (isVector && vectorNodes.length > 0) {
+        data.components = data.components.map(comp => {
+          // Try to find a matching node by name or service type
+          const match = vectorNodes.find(vn => 
+            vn.name.toLowerCase().includes(comp.name.toLowerCase()) || 
+            comp.name.toLowerCase().includes(vn.name.toLowerCase()) ||
+            vn.id.toLowerCase() === comp.id.toLowerCase()
+          );
+          
+          if (match) {
+            return {
+              ...comp,
+              box_2d: match.box_2d,
+              id: match.id || comp.id // Use vector ID if available
+            };
+          }
+          return comp;
+        });
+      }
+
       sessionStorage.setItem(
         "archData",
         JSON.stringify({ data, imageUrl, filename: file.name })
       );
+      playSuccessSound();
+      sendNotification("Analysis Complete", `Architecture analysis for ${file.name} is finished.`);
       router.push("/dashboard");
+
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to analyze diagram");
       setLoading(null);
@@ -104,10 +160,9 @@ export default function HomePage() {
           className={`
             border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center text-center cursor-pointer
             transition-all duration-300
-            ${
-              dragOver
-                ? "border-blue-400 bg-blue-500/10 scale-[1.01]"
-                : file
+            ${dragOver
+              ? "border-blue-400 bg-blue-500/10 scale-[1.01]"
+              : file
                 ? "border-emerald-500/50 bg-emerald-500/5"
                 : "border-[var(--border)] hover:border-blue-500/40 hover:bg-blue-500/5"
             }
@@ -123,7 +178,7 @@ export default function HomePage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/jpg,image/webp,application/pdf,.docx"
+            accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,application/pdf,.docx,.drawio,.xml"
             className="hidden"
             onChange={onFileChange}
           />
@@ -174,7 +229,7 @@ export default function HomePage() {
                   Drag & drop your diagram
                 </p>
                 <p className="text-slate-400 text-sm">
-                  Supports PNG, JPG, PDF, or .docx files
+                  Supports PNG, JPG, SVG, and Draw.io (.drawio, .xml)
                 </p>
               </div>
             </div>

@@ -755,7 +755,7 @@ async def generate_document(
 
     # temperature=0 → deterministic output; consistent cost estimates across runs
     model = genai.GenerativeModel(
-        "gemini-2.5-flash",
+        "gemini-2.5-pro",
         generation_config=genai.GenerationConfig(temperature=0.0)
     )
 
@@ -912,7 +912,7 @@ async def generate_interactive(file: UploadFile = File(...)):
     """
 
     model = genai.GenerativeModel(
-        "gemini-2.5-flash",
+        "gemini-2.5-pro",
         generation_config=genai.GenerationConfig(
             temperature=0.0
         )
@@ -1012,7 +1012,7 @@ async def simulate_traffic(request: SimulationRequest):
     }}
     """
     
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    model = genai.GenerativeModel("gemini-2.5-pro")
     
     try:
         response = model.generate_content(prompt)

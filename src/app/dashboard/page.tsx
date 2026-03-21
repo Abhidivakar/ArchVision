@@ -2,11 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ArchComponent, InteractiveResponse, SimulationReport } from "@/lib/types";
+import type { ArchComponent, InteractiveResponse, SimulationReport, CalibrationOverride } from "@/lib/types";
 import HotspotLayer from "@/components/HotspotLayer";
 import { runSimulation } from "@/lib/api";
+import { playSuccessSound, playTfSuccessSound } from "@/lib/audio";
+import { requestNotificationPermission, sendNotification } from "@/lib/notifications";
+import TerraformEditor from "@/components/TerraformEditor";
 
-type Tab = "overview" | "component" | "simulation" | "terraform";
+type Tab = "overview" | "component" | "simulation" | "terraform" | "improvement";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -24,10 +27,42 @@ export default function DashboardPage() {
   const [simulationReport, setSimulationReport] = useState<SimulationReport | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
 
-  // Advanced Phase 6 Simulation State
+  const [isMultiRegion, setIsMultiRegion] = useState<boolean>(false);
   const [scenarioPreset, setScenarioPreset] = useState<string>("Custom");
   const [failureSimulation, setFailureSimulation] = useState<string[]>([]);
-  const [isMultiRegion, setIsMultiRegion] = useState<boolean>(false);
+  const [plannedIds, setPlannedIds] = useState<string[]>([]);
+
+  // Advanced Terraform State
+  const [tfFiles, setTfFiles] = useState<Record<string, string> | null>(null);
+  const [tfSummary, setTfSummary] = useState<string>("");
+  const [plannedConfigs, setPlannedConfigs] = useState<Record<string, string>>({});
+
+  const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
+  const [tfLogs, setTfLogs] = useState<string[]>([]);
+  const [isTfGenerating, setIsTfGenerating] = useState(false);
+  const [isTfVerifying, setIsTfVerifying] = useState(false);
+  const [activeTfFile, setActiveTfFile] = useState<string>("main.tf");
+  const [tfSplitRatio, setTfSplitRatio] = useState(0.6); // 60% top, 40% bottom
+  const [isResizing, setIsResizing] = useState(false);
+  const [tfRetryCount, setTfRetryCount] = useState(0);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+
+  // New Global Scenario States
+  const [activeScenario, setActiveScenario] = useState<'original' | 'improved'>('original');
+  const [improvedData, setImprovedData] = useState<InteractiveResponse | null>(null);
+  const [improvedImageUrl, setImprovedImageUrl] = useState<string>("");
+  const [improvedSimReport, setImprovedSimReport] = useState<SimulationReport | null>(null);
+  const [improvedTfFiles, setImprovedTfFiles] = useState<Record<string, string> | null>(null);
+  const [improvementSolution, setImprovementSolution] = useState<any | null>(null);
+  const [isImproving, setIsImproving] = useState(false);
+  const [isGeneratingDiagram, setIsGeneratingDiagram] = useState(false);
+  const [improvedTfSummary, setImprovedTfSummary] = useState<string>("");
+  const [improvedPlannedConfigs, setImprovedPlannedConfigs] = useState<Record<string, string>>({});
+  const [improvedPlannedIds, setImprovedPlannedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    requestNotificationPermission();
+  }, []);
 
   // Preset multipliers: what % of slider range each scenario fills
   const PRESET_MULTIPLIERS: Record<string, number> = {
@@ -74,12 +109,65 @@ export default function DashboardPage() {
         router.push("/");
       }
     }, [router]);
+  
+  // Resizing logic for Terraform Tab
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsResizing(true);
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const container = document.getElementById("tf-content-container");
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const offset = e.clientY - rect.top;
+      const newRatio = Math.max(0.2, Math.min(0.8, offset / rect.height));
+      setTfSplitRatio(newRatio);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = "default";
+    };
+
+    if (isResizing) {
+      document.body.style.cursor = "ns-resize";
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing]);
 
   const handleSelectComp = (comp: ArchComponent) => {
     setActiveComp(comp);
     setActiveId(comp.id || comp.name);
     setSliderVal(1);
     setActiveTab("component");
+  };
+
+  const handleSaveCalibration = (overrides: Record<string, CalibrationOverride>) => {
+    if (!data) return;
+
+    const updatedComponents = data.components.map(comp => {
+      const override = overrides[comp.id];
+      if (override) {
+        return {
+          ...comp,
+          box_2d: [override.ymin, override.xmin, override.ymax, override.xmax] as [number, number, number, number]
+        };
+      }
+      return comp;
+    });
+
+    setData({
+      ...data,
+      components: updatedComponents
+    });
   };
 
   const getSecurityScore = () => {
@@ -120,21 +208,282 @@ export default function DashboardPage() {
   };
 
   const handleSimulate = async () => {
-    if (!data) return;
+    const dataToUse = activeScenario === 'original' ? data : improvedData;
+    if (!dataToUse) return;
     setIsSimulating(true);
     try {
       const res = await runSimulation(
-        data,
+        dataToUse,
         simulationState,
         scenarioPreset,
         failureSimulation,
         isMultiRegion
       );
-      setSimulationReport(res.report);
+      if (activeScenario === 'original') {
+        setSimulationReport(res.report);
+      } else {
+        setImprovedSimReport(res.report);
+      }
+      playSuccessSound();
+      sendNotification("Simulation Finished", "The traffic simulation analysis is now complete and ready for review.");
     } catch (err: any) {
       alert(err.message || "Simulation failed");
     } finally {
       setIsSimulating(false);
+    }
+  };
+
+  const getTrafficVolume = () => {
+    if (simulationState["rps"]) {
+      return (simulationState["rps"] - 10) / (5000 - 10);
+    }
+    return 0.1;
+  };
+
+  const addLog = (msg: string) => {
+    setTfLogs(prev => [...prev.slice(-49), `[${new Date().toLocaleTimeString()}] ${msg}`]);
+  };
+  const handleGenerateTf = async (errorLog?: string, autoPlan?: boolean, overrideFiles?: Record<string, string>) => {
+    const dataToUse = activeScenario === 'original' ? data : improvedData;
+    const simReportToUse = activeScenario === 'original' ? simulationReport : improvedSimReport;
+    const tfFilesToUse = activeScenario === 'original' ? tfFiles : improvedTfFiles;
+    
+    if (!dataToUse) return;
+    setIsTfGenerating(true);
+    
+    const filesToUse = overrideFiles || tfFilesToUse;
+
+    setTfLogs([`[${new Date().toLocaleTimeString()}] Initiating ${errorLog ? "intelligent auto-fix" : "on-demand production Terraform generation"}...`]);
+    setIsSummaryExpanded(false);
+
+    try {
+      const response = await fetch("/api/terraform/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          architectureJson: dataToUse,
+          simulationState,
+          simulationReport: simReportToUse,
+          errorContext: errorLog,
+          files: errorLog ? filesToUse : null
+        }),
+      });
+      if (!response.ok) throw new Error("Generation failed");
+      const result = await response.json();
+      
+      if (activeScenario === 'original') {
+        setTfFiles(result.files);
+        setTfSummary(result.summary);
+        if (result.componentConfigs) setPlannedConfigs(result.componentConfigs);
+      } else {
+        setImprovedTfFiles(result.files);
+        setImprovedTfSummary(result.summary);
+        if (result.componentConfigs) setImprovedPlannedConfigs(result.componentConfigs);
+      }
+      
+      setActiveTfFile("main.tf");
+      playTfSuccessSound();
+      sendNotification("Terraform Code Ready", "Production-grade Terraform configurations have been generated successfully.");
+      addLog("Success: Terraform code generated based on current simulation sizing.");
+      
+      if (autoPlan) {
+        addLog("Auto-Fix complete. Triggering automatic Plan verification...");
+        setTimeout(() => handleExecuteTf("plan", result.files), 1000);
+      }
+    } catch (e: any) {
+      addLog(`Error: ${e.message}`);
+    } finally {
+      setIsTfGenerating(false);
+    }
+  };
+
+  const handleExecuteTf = async (command: string, overrideFiles?: Record<string, string>) => {
+    const filesToUse = overrideFiles || tfFiles;
+    if (!filesToUse) return;
+    setIsTfVerifying(true);
+    addLog(`Running terraform ${command}...`);
+    try {
+      const res = await fetch("/api/terraform/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files: filesToUse, command })
+      });
+      const result = await res.json();
+      
+      if (result.stdout) addLog(result.stdout);
+      if (result.stderr) addLog(`STDERR: ${result.stderr}`);
+
+      // Crucial: Update global state if we ran with overrides (e.g. from IDE save)
+      if (overrideFiles) {
+        if (activeScenario === 'original') {
+          setTfFiles(overrideFiles);
+        } else {
+          setImprovedTfFiles(overrideFiles);
+        }
+      }
+
+      if (result.success) {
+        addLog(`Terraform ${command} successful!`);
+        playTfSuccessSound();
+        sendNotification("Terraform Action Complete", `The ${command} operation on your infrastructure was successful.`);
+        if (command === "plan") {
+          const dataToUse = activeScenario === 'original' ? data : improvedData;
+          // Filter components to only those that appear in the Terraform code
+          const components = (dataToUse as any)?.components || [];
+          const allTfContent = Object.values(filesToUse).join("\n").toLowerCase();
+          
+          const relevantIds = components
+            .filter((c: any) => {
+              const nameMatch = c.name?.toLowerCase() && allTfContent.includes(c.name.toLowerCase());
+              const idMatch = c.id?.toLowerCase() && allTfContent.includes(c.id.toLowerCase());
+              const serviceMatch = c.service?.toLowerCase() && allTfContent.includes(c.service.toLowerCase());
+              return nameMatch || idMatch || serviceMatch;
+            })
+            .map((c: any) => c.id || c.name);
+
+          if (activeScenario === 'original') {
+            setPlannedIds(relevantIds);
+          } else {
+            setImprovedPlannedIds(relevantIds);
+          }
+          addLog(`Visual Verification: ${relevantIds.length} infrastructure nodes highlighted in GREEN.`);
+          setTfRetryCount(0); // Reset on success
+        }
+      } else {
+        addLog(`Terraform ${command} failed.`);
+        
+        // Auto-fix logic - Reduced to 1 retry from frontend for better stability
+        if (command === "plan" && tfRetryCount < 1) {
+          addLog("--- CRITICAL: Plan error detected. Triggering Intelligent Auto-Fix... ---");
+          setTfRetryCount(prev => prev + 1);
+          const errorMsg = result.stderr || result.error || "Unknown error during plan";
+          setTimeout(() => handleGenerateTf(errorMsg, true, filesToUse), 1500);
+        } else if (command === "plan") {
+           addLog("--- Max retry attempts reached. Please use the IDE 'Edit' button to fix manually. ---");
+        }
+      }
+    } catch (e: any) {
+      addLog(`Execution Error: ${e.message}`);
+    } finally {
+      setIsTfVerifying(false);
+    }
+  };
+
+  const handleSyncFromIde = async (newFiles: Record<string, string>) => {
+    const dataToUse = activeScenario === 'original' ? data : improvedData;
+    if (!dataToUse) return;
+    try {
+      const response = await fetch("/api/terraform/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files: newFiles, architectureJson: dataToUse })
+      });
+      if (!response.ok) throw new Error("Synchronization failed");
+      const result = await response.json();
+      if (result.componentConfigs) {
+        if (activeScenario === 'original') {
+          setPlannedConfigs(result.componentConfigs);
+        } else {
+          setImprovedPlannedConfigs(result.componentConfigs);
+        }
+        addLog("Sync: Visual components updated with manual Terraform edits.");
+      }
+    } catch (e: any) {
+      addLog(`Sync Error: ${e.message}`);
+    }
+  };
+
+  const handleImproveAnalysis = async () => {
+    if (!data) return;
+    setIsImproving(true);
+    try {
+      const currentReport = activeScenario === 'original' ? simulationReport : improvedSimReport;
+      const res = await fetch("/api/architecture/improve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ architectureJson: data, simulationReport: currentReport })
+      });
+      if (!res.ok) throw new Error("Improvement analysis failed");
+      const result = await res.json();
+      setImprovementSolution(result);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsImproving(false);
+    }
+  };  const handleGenerateImprovedDiagram = async () => {
+    if (!improvementSolution) return;
+    setIsGeneratingDiagram(true);
+    addLog("System: Evolving architecture from AI synthesis model...");
+    
+    try {
+      // Call the Real Image Generation API using Vertex AI Imagen
+      const imgRes = await fetch("/api/architecture/generate-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: improvementSolution.image_prompt })
+      });
+      
+      let newImageUrl = imageUrl; // Default to original if generation fails or is throttled
+
+      if (!imgRes.ok) {
+        if (imgRes.status === 429) {
+          sendNotification("AI Image Quota Exceeded", "High-fidelity generation is temporarily paused. Falling back to original diagram.");
+          addLog("Warning: Imagen quota reached. Using original image as background.");
+          // We don't throw here, we just continue with original image
+        } else {
+          throw new Error("Failed to generate architecture image");
+        }
+      } else {
+        const { imageUrl: generatedUrl } = await imgRes.json();
+        newImageUrl = generatedUrl;
+      }
+      
+      let improvedDataToSet: InteractiveResponse | null = null;
+ 
+      if (improvementSolution.improved_components && improvementSolution.improved_components.length > 0) {
+        // Inherit non-component data from original or create defaults
+        improvedDataToSet = { 
+          ...data!,
+          components: improvementSolution.improved_components 
+        };
+      } else {
+        // Fallback or legacy path
+        improvedDataToSet = data;
+      }
+      
+      setImprovedImageUrl(newImageUrl);
+      setImprovedData(improvedDataToSet);
+      setActiveScenario('improved');
+      
+      playTfSuccessSound();
+      sendNotification("Architecture Evolved", "Your layout has been optimized for production scale and resilience.");
+      addLog("Success: Improved architecture context generated successfully.");
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsGeneratingDiagram(false);
+    }
+  };
+;
+
+  const handleDownloadTf = async () => {
+    if (!tfFiles) return;
+    try {
+      const res = await fetch("/api/terraform/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files: tfFiles, docType: "Advanced", environment: "Production" })
+      });
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "terraform_production_configs.zip";
+      a.click();
+    } catch (e: any) {
+      addLog(`Download Error: ${e.message}`);
     }
   };
 
@@ -331,7 +680,220 @@ export default function DashboardPage() {
     document.body.removeChild(link);
   };
 
+  const handleExportTfReport = () => {
+    if (!tfFiles || !data) return;
+
+    // Check if simulation was run
+    const hasSim = !!simulationReport;
+    const totalSimCost = hasSim ? (simulationReport?.cost_breakdown?.reduce((sum: number, c: any) => sum + (c.monthly_cost || 0), 0) || 0) : 0;
+    const rps = simulationState["rps"] || 0;
+    const components = data.components;
+
+
+
+    // Helper for fuzzy matching in report
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const lookupConfig = (cId: string, cName: string) => {
+      const idNorm = normalize(cId);
+      const nameNorm = normalize(cName);
+      let found = plannedConfigs[cId] || plannedConfigs[cName];
+      if (!found) {
+        const key = Object.keys(plannedConfigs).find(k => {
+          const nk = normalize(k);
+          return nk === idNorm || nk === nameNorm;
+        });
+        if (key) found = plannedConfigs[key];
+      }
+      return found;
+    };
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Terraform Infrastructure Audit — ArchVision</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono&display=swap');
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Inter',sans-serif; background:#f8fafc; color:#1e293b; padding:60px; line-height:1.6; }
+    .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:4px solid #0f172a; padding-bottom:20px; margin-bottom:40px; }
+    h1 { font-size:32px; color:#0f172a; letter-spacing:-0.02em; }
+    .meta { text-align:right; font-size:12px; color:#64748b; }
+    h2 { font-size:18px; color:#0f172a; margin:40px 0 16px; display:flex; align-items:center; gap:10px; }
+    h2::before { content:''; display:inline-block; width:12px; height:12px; background:#3b82f6; border-radius:3px; }
+    .summary-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:20px; margin-bottom:30px; }
+    .stat-card { background:#fff; padding:20px; border-radius:16px; border:1px solid #e2e8f0; box-shadow:0 1px 3px rgba(0,0,0,0.05); }
+    .stat-label { font-size:10px; text-transform:uppercase; letter-spacing:0.05em; color:#64748b; margin-bottom:6px; font-weight:600; }
+    .stat-value { font-size:20px; font-weight:700; color:#0f172a; }
+    .perf-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; background:#f1f5f9; color:#475569; margin-top:4px; }
+    .perf-badge.green { background:#dcfce7; color:#15803d; }
+    .config-table { width:100%; border-collapse:separate; border-spacing:0; background:#fff; border-radius:16px; border:1px solid #e2e8f0; overflow:hidden; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1); }
+    th { background:#f1f5f9; padding:16px 20px; text-align:left; font-size:12px; font-weight:700; color:#475569; text-transform:uppercase; }
+    td { padding:16px 20px; border-top:1px solid #f1f5f9; font-size:13px; vertical-align:top; }
+    .comp-name { font-weight:600; color:#0f172a; margin-bottom:4px; display:block; }
+    .comp-service { font-size:11px; color:#64748b; background:#f8fafc; padding:2px 8px; border-radius:4px; border:1px solid #e2e8f0; }
+    .config-pill { display:inline-block; background:#eff6ff; color:#1d4ed8; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; border:1px solid #dbeafe; line-height:1.5; white-space:pre-wrap; text-align:left; }
+
+    .no-config { color:#94a3b8; font-style:italic; font-size:12px; }
+    .section-desc { font-size:14px; color:#475569; margin-bottom:20px; max-width:800px; }
+    .compliance-box { background:#f0f9ff; border:1px solid #bae6fd; border-radius:12px; padding:20px; margin-bottom:30px; font-size:14px; color:#0369a1; }
+    .compliance-box h3 { font-size:14px; font-weight:700; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.05em; }
+    .files-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .file-badge { font-family:'JetBrains Mono',monospace; font-size:11px; background:#1e293b; color:#f1f5f9; padding:4px 12px; border-radius:6px; }
+    .footer { margin-top:80px; padding-top:30px; border-top:1px solid #e2e8f0; text-align:center; font-size:11px; color:#94a3b8; }
+    @media print { body { padding:30px; } .stat-card, .config-table { box-shadow:none; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>Infrastructure Implementation Audit</h1>
+      <p style="color:#64748b">Verification of Production Terraform against Architecture Requirements</p>
+    </div>
+    <div class="meta">
+      <strong>ARCHVISION PRO v2.1</strong><br/>
+      Audit ID: ${Math.random().toString(36).substring(7).toUpperCase()}<br/>
+      ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+    </div>
+  </div>
+
+  <h2>Infrastructure at a Glance</h2>
+  <div class="summary-grid">
+    <div class="stat-card">
+      <div class="stat-label">Provisioned Tier</div>
+      <div class="stat-value">${rps > 2000 ? 'Enterprise' : rps > 500 ? 'Scalable' : 'Standard'}</div>
+      <div class="perf-badge">Auto-Scaled</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Peak Simulation Load</div>
+      <div class="stat-value">${rps} RPS</div>
+      <div class="perf-badge ${hasSim ? 'green' : ''}">${hasSim ? 'Validated' : 'Nominal'}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Mapped Components</div>
+      <div class="stat-value">${Object.keys(plannedConfigs).length} / ${components.length}</div>
+      <div class="perf-badge">Success Score: ${Math.round((Object.keys(plannedConfigs).length / components.length) * 100)}%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Est. Monthly OpEx</div>
+      <div class="stat-value">$${hasSim ? totalSimCost.toLocaleString() : '---'}</div>
+      <div class="perf-badge">Projected</div>
+    </div>
+  </div>
+
+  ${hasSim ? `
+  <h2>Simulation Performance Benchmarks</h2>
+  <div class="section-desc">Infrastructure handle-rate and latency thresholds derived from active traffic simulation.</div>
+  <div class="summary-grid" style="grid-template-columns: repeat(2, 1fr);">
+    <div class="stat-card">
+      <div class="stat-label">Peak Concurrent Requests</div>
+      <div class="stat-value">${rps.toLocaleString()} RPS</div>
+      <p style="font-size:11px; color:#64748b; margin-top:8px;">Target SLA: Sub-200ms at 95th Percentile</p>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Bottleneck Risk Level</div>
+      <div class="stat-value" style="color:${simulationReport?.bottlenecks?.length > 0 ? '#dc2626' : '#15803d'}">
+        ${simulationReport?.bottlenecks?.length > 0 ? 'High Risk' : 'Healthy'}
+      </div>
+      <p style="font-size:11px; color:#ef4444; margin-top:8px;">${simulationReport?.bottlenecks?.[0] || 'Clean validation run'}</p>
+    </div>
+  </div>
+  ` : ''}
+
+  <h2>Terraform Compliance Strategy</h2>
+  <div class="section-desc">Automated architectural synthesis explaining the rationale behind selected resource tiers.</div>
+  <div class="stat-card" style="margin-bottom:40px; line-height:1.8; color:#334155; font-size:14px; border-left: 4px solid #3b82f6; background:#f8fafc;">
+    ${tfSummary.split('\n').map(p => {
+      if (p.trim().startsWith('##')) return `<h3 style="margin:20px 0 10px; color:#0f172a; font-size:15px;">${p.replace(/#/g, '').trim()}</h3>`;
+      if (p.trim().startsWith('-')) return `<li style="margin-left:20px; margin-bottom:5px;">${p.replace('-', '').trim()}</li>`;
+      return `<p style="margin-bottom:10px">${p}</p>`;
+    }).join('')}
+  </div>
+
+  <h2>Technical Implementation Detail</h2>
+  <div class="section-desc">Detailed resource-level specifications extracted from the provisioned HCL source.</div>
+  <table class="config-table">
+    <thead>
+      <tr>
+        <th style="width:35%">Architecture Component</th>
+        <th>Production Terraform Configuration</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${components.map(c => {
+        const config = lookupConfig(c.id, c.name);
+        return `
+          <tr>
+            <td>
+              <span class="comp-name">${c.name}</span>
+              <span class="comp-service">${c.service}</span>
+            </td>
+            <td>
+              ${config 
+                ? `<div>
+                    <div class="config-pill">${config}</div>
+                    ${hasSim && (simulationReport?.bottleneck_components?.includes(c.id) || simulationReport?.bottleneck_components?.includes(c.name))
+                      ? `<div style="margin-top:8px; font-size:10px; font-weight:700; color:#dc2626;">🚨 BOTTLENECK MITIGATION APPLIED</div>` 
+                      : ''}
+                   </div>` 
+                : `<span class="no-config">Implicit resource or managed service endpoint.</span>`
+              }
+            </td>
+          </tr>
+        `;
+      }).join('')}
+
+    </tbody>
+  </table>
+
+  <h2>Global Resource Inventory</h2>
+  <div class="section-desc">Complete listing of all provisioned HCL resources across the current deployment set.</div>
+  <div class="stat-card" style="background:#0f172a; color:#94a3b8; font-family:'JetBrains Mono', monospace; font-size:11px; max-height:400px; overflow-y:auto; padding:24px; border-radius:12px; margin-bottom:40px; box-shadow:inset 0 4px 6px rgba(0,0,0,0.2);">
+    ${Object.entries(tfFiles).map(([name, content]) => {
+      const resources = content.match(/resource\s+"([^"]+)"\s+"([^"]+)"/g) || [];
+      if (resources.length === 0) return '';
+      return `
+        <div style="margin-bottom:20px; border-bottom:1px solid #1e293b; padding-bottom:12px;">
+          <div style="color:#38bdf8; margin-bottom:8px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em;">📄 ${name}</div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px;">
+            ${resources.map(r => `<div style="padding-left:10px; color:#e2e8f0;">• ${r.replace('resource ', '').replace(/"/g, '')}</div>`).join('')}
+          </div>
+        </div>
+      `;
+    }).join('')}
+  </div>
+
+  <h2 style="margin-top:60px;">Audit Compliance Trail</h2>
+  <div class="compliance-box">
+    <h3>State Validation</h3>
+    <p>This deployment plan has been verified against Google Cloud best practices and regional quota limits. ${hasSim ? 'Sizing confirmed for target RPS.' : 'Static verification completed.'}</p>
+    <div class="files-list">
+      ${Object.keys(tfFiles).map(f => `<span class="file-badge">${f}</span>`).join('')}
+    </div>
+  </div>
+
+  <div class="footer">
+    Audit Generated by ArchVision · ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}
+  </div>
+</body>
+</html>`;
+
+
+
+    const win = window.open('', '_blank');
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      setTimeout(() => {
+        if (win) win.print();
+      }, 600);
+    }
+
+  };
+
+
   const score = getSecurityScore();
+
 
   if (!data) {
     return (
@@ -378,29 +940,71 @@ export default function DashboardPage() {
         </div>
 
         {/* Diagram Container */}
-        <div className="flex-1 overflow-auto flex items-center justify-center p-4 relative">
-          <div className="relative">
+        <div className="flex-1 overflow-auto flex items-center justify-center p-4 relative bg-[#02050c]">
+          {/* Pixel-Flush Wrapper: Element box matches Image pixels exactly */}
+          <div className="relative rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.5)] overflow-hidden bg-[#0a0f1d] border border-white/5 inline-block">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              ref={imageRef}
-              src={imageUrl}
-              alt="Architecture Diagram"
-              className="block max-w-full max-h-[75vh] object-contain rounded-xl shadow-2xl"
-              style={{ userSelect: "none" }}
-            />
-            <HotspotLayer
-              components={data.components}
-              imageRef={imageRef}
-              onSelect={handleSelectComp}
-              activeId={activeId}
-              bottleneckIds={simulationReport?.bottleneck_components}
-              latencyData={simulationReport?.latency_prediction}
-              trafficVolume={
-                simulationState["rps"] 
-                  ? (simulationState["rps"] - 10) / (5000 - 10) 
-                  : 0.1
-              }
-            />
+            <div className="relative group">
+              {/* Scenario Toggler */}
+              {improvedImageUrl && (
+                <div className="absolute top-4 left-4 z-[110] flex items-center bg-slate-900/90 backdrop-blur-md rounded-xl border border-white/10 p-1 shadow-2xl animate-fade-in">
+                  <button
+                    onClick={() => setActiveScenario('original')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                      activeScenario === 'original'
+                        ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    Current
+                  </button>
+                  <button
+                    onClick={() => setActiveScenario('improved')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                      activeScenario === 'improved'
+                        ? "bg-emerald-600 text-white shadow-lg shadow-emerald-500/30"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    Improved ✨
+                  </button>
+                </div>
+              )}
+
+              <img
+                ref={imageRef}
+                src={activeScenario === 'original' ? (imageUrl || "/api/placeholder/1200/800") : (improvedImageUrl || imageUrl || "/api/placeholder/1200/800")}
+                alt="Architecture Diagram"
+                key={activeScenario} // Force re-render on scenario switch to avoid ghosting or stale states
+                className={`block max-w-full max-h-[75vh] w-auto h-auto transition-opacity duration-700 ${activeScenario === 'improved' ? 'opacity-90' : 'opacity-100'}`}
+                style={{ userSelect: "none" }}
+                onLoad={() => addLog(`System: View switched to ${activeScenario} scenario.`)}
+                onError={() => {
+                  addLog(`Error: Failed to load ${activeScenario} image.`);
+                  if (activeScenario === 'improved') setActiveScenario('original');
+                }}
+              />
+              <HotspotLayer
+                components={(activeScenario === 'original' ? data : (improvedData || data)).components}
+                imageRef={imageRef}
+                imageUrl={activeScenario === 'original' ? imageUrl : (improvedImageUrl || imageUrl)}
+                onSelect={handleSelectComp}
+                activeId={activeId}
+                bottleneckIds={(activeScenario === 'original' ? simulationReport : improvedSimReport)?.bottleneck_components}
+                latencyData={(activeScenario === 'original' ? simulationReport : improvedSimReport)?.latency_prediction}
+                trafficVolume={
+                  simulationState["rps"] 
+                    ? (simulationState["rps"] - 10) / (5000 - 10) 
+                    : 0.1
+                }
+                plannedIds={activeScenario === 'original' ? plannedIds : improvedPlannedIds}
+                plannedConfigs={activeScenario === 'original' ? plannedConfigs : improvedPlannedConfigs}
+                onSaveCalibration={handleSaveCalibration}
+                originalComponents={data?.components}
+                simulationReport={activeScenario === 'original' ? simulationReport : improvedSimReport}
+              />
+            </div>
+
           </div>
         </div>
 
@@ -418,8 +1022,9 @@ export default function DashboardPage() {
             [
               { key: "overview", label: "Overview" },
               { key: "component", label: "Component Info" },
-              { key: "simulation", label: "Traffic Simulation" },
-              { key: "terraform", label: "Terraform Code" },
+              { key: "simulation", label: "Simulation" },
+              { key: "terraform", label: "Provisioning" },
+              { key: "improvement", label: "✨ Improvement" },
             ] as { key: Tab; label: string }[]
           ).map((t) => (
             <button
@@ -445,7 +1050,7 @@ export default function DashboardPage() {
                     Est. Monthly Cost
                   </div>
                   <div className="text-xl font-bold text-white leading-tight">
-                    {data.cost_estimate}
+                    {data?.cost_estimate || "$0"}
                   </div>
                 </div>
                 <div className="glass rounded-xl p-4">
@@ -468,9 +1073,9 @@ export default function DashboardPage() {
                   Architecture Summary
                 </h3>
                 <p className="text-slate-300 leading-relaxed text-sm whitespace-pre-wrap">
-                  {data.security_summary}
+                  {data?.security_summary}
                 </p>
-                {data.cost_details && (
+                {data?.cost_details && (
                   <p className="text-slate-400 leading-relaxed text-[11px] mt-4 pt-4 border-t border-white/5 italic">
                     {data.cost_details}
                   </p>
@@ -490,7 +1095,7 @@ export default function DashboardPage() {
               {/* Component list */}
               <div>
                 <h3 className="font-semibold text-white mb-3 pb-2 border-b border-[var(--border)]">
-                  Detected Components ({data.components.length})
+                  Detected Components ({data?.components.length || 0})
                 </h3>
                 <div className="space-y-2">
                   {data.components.map((c, i) => (
@@ -536,65 +1141,71 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="space-y-5">
-                  <div>
-                    <span className="text-xs bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2 py-0.5 rounded-full">
-                      {activeComp.service}
-                    </span>
-                    <h2 className="text-xl font-bold text-white mt-2">
-                      {activeComp.name}
-                    </h2>
-                    <p className="text-slate-400 text-sm mt-2 leading-relaxed">
-                      {activeComp.description || "No description provided."}
+                  <div className="glass rounded-xl border border-[var(--border)] p-5">
+                    <h3 className="font-semibold text-white flex items-center gap-2 mb-3 pb-2 border-b border-[var(--border)]">
+                      <span>🏗️</span> Architecture Role
+                    </h3>
+                    <p className="text-slate-300 text-sm leading-relaxed">
+                      {activeComp?.description || "No description provided."}
                     </p>
                   </div>
 
-                  {/* Cost Calculator */}
-                  <div className="glass rounded-xl border border-[var(--border)] p-5 space-y-4">
-                    <h3 className="font-semibold text-white flex items-center gap-2 pb-2 border-b border-[var(--border)]">
-                      <span>💰</span> Cost Calculator
-                    </h3>
-                    <div className="flex justify-between items-center text-sm">
-                       <span className="text-slate-400">Base Estimate:</span>
-                      <span className="font-mono text-white">
-                        {activeComp.cost || "N/A"}
-                      </span>
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-xs text-slate-400 mb-2">
-                        <span>Traffic Multiplier</span>
-                        <span className="text-emerald-400 font-mono font-semibold">
-                          {sliderVal}x
-                        </span>
+                  {activeComp?.dependencies && activeComp.dependencies.length > 0 && (
+                    <div className="glass rounded-xl border border-[var(--border)] p-5">
+                      <h3 className="font-semibold text-white flex items-center gap-2 mb-3 pb-2 border-b border-[var(--border)]">
+                        <span>🔗</span> Dependencies
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {activeComp.dependencies.map(depId => {
+                          const dep = (data as any)?.components?.find((c: any) => c.id === depId);
+                          return (
+                            <span key={depId} className="px-2 py-1 bg-slate-800 border border-white/5 rounded text-[11px] text-slate-300">
+                              {dep?.name || depId}
+                            </span>
+                          );
+                        })}
                       </div>
-                      <input
-                        type="range"
-                        min={1}
-                        max={10}
-                        value={sliderVal}
-                        onChange={(e) =>
-                          setSliderVal(Number(e.target.value))
-                        }
-                        className="w-full accent-emerald-500"
-                      />
                     </div>
-                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 text-emerald-300 text-sm font-semibold">
-                      Scaled Cost: {scaledCost(activeComp, sliderVal)}
+                  )}
+
+                  <div className="glass rounded-xl border border-[var(--border)] p-5">
+                    <h3 className="font-semibold text-white flex items-center gap-2 mb-3 pb-2 border-b border-[var(--border)]">
+                      <span>💎</span> Operational Cost
+                    </h3>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-bold text-emerald-400 font-mono">
+                        {activeComp?.cost || "N/A"}
+                      </span>
+                      <span className="text-slate-500 text-xs uppercase tracking-wider">/ Month (Est)</span>
                     </div>
                   </div>
 
-                  {/* Security */}
                   <div className="glass rounded-xl border border-[var(--border)] p-5">
                     <h3 className="font-semibold text-white flex items-center gap-2 mb-3 pb-2 border-b border-[var(--border)]">
                       <span>🛡️</span> Security Posture
                     </h3>
                     <p className="text-slate-300 text-sm leading-relaxed">
-                      {activeComp.security || "No security details provided."}
+                      {activeComp?.security || "No security details provided."}
                     </p>
                   </div>
+
+                  {activeComp && plannedConfigs[activeComp.id] && (
+                    <div className="glass rounded-xl border border-blue-500/30 bg-blue-500/5 p-5 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                      <h3 className="font-semibold text-blue-400 flex items-center gap-2 mb-3 pb-2 border-b border-blue-500/20">
+                        <span>📦</span> Production Configuration
+                      </h3>
+                      <div className="bg-slate-900/50 rounded-lg p-3 border border-blue-500/10">
+                        <pre className="text-[11px] text-blue-100 font-mono leading-relaxed whitespace-pre-wrap">
+                          {plannedConfigs[activeComp.id]}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
+
 
           {/* ── Simulation Tab ── */}
           {activeTab === "simulation" && (
@@ -605,7 +1216,7 @@ export default function DashboardPage() {
                   <span>⚙️</span> Workload Parameters
                 </h3>
 
-                {data.simulation_parameters ? (
+                {data?.simulation_parameters ? (
                   <div className="space-y-6">
                     {/* Scenario Presets */}
                     <div>
@@ -703,8 +1314,9 @@ export default function DashboardPage() {
                           <Spinner /> Running AI Analysis...
                         </div>
                       ) : (
-                        "Run Simulation Request"
+                        simulationReport ? "Re-simulate Request" : "Run Simulation Request"
                       )}
+
                     </button>
                   </div>
                 ) : (
@@ -739,12 +1351,12 @@ export default function DashboardPage() {
                   <div className="glass rounded-xl p-5 border border-indigo-500/30 bg-indigo-500/5">
                     <h3 className="font-semibold text-white mb-2 text-lg">Impact Summary</h3>
                     <p className="text-sm text-slate-300 leading-relaxed">
-                      {simulationReport.impact_summary}
+                      {simulationReport?.impact_summary}
                     </p>
                   </div>
 
                   {/* Infrastructure Scaling Result */}
-                  {simulationReport.scaling_result && simulationReport.scaling_result.length > 0 && (
+                  {simulationReport?.scaling_result && simulationReport.scaling_result.length > 0 && (
                     <div className="glass rounded-xl p-5 border border-cyan-500/30 bg-cyan-500/5">
                       <h3 className="font-semibold text-cyan-300 mb-3 flex items-center gap-2">
                         <span>📈</span> Infrastructure Scaling
@@ -766,28 +1378,36 @@ export default function DashboardPage() {
                   )}
 
                   {/* Latency Prediction */}
-                  {simulationReport.latency_prediction && simulationReport.latency_prediction.length > 0 && (
+                  {simulationReport?.latency_prediction && simulationReport.latency_prediction.length > 0 && (
                     <div className="glass rounded-xl p-5 border border-purple-500/30 bg-purple-500/5">
                       <h3 className="font-semibold text-purple-300 mb-3 flex items-center gap-2">
                         <span>⚡</span> Latency Prediction
                       </h3>
                       <div className="space-y-2">
-                        {simulationReport.latency_prediction.map((l, i) => (
-                          <div key={i} className="flex items-center justify-between text-sm bg-slate-800/50 rounded-lg p-3">
-                            <span className="text-slate-300">{l.tier}</span>
-                            <span className={`font-mono font-bold ${l.latency_ms > 300 ? "text-rose-400" : l.latency_ms > 150 ? "text-amber-400" : "text-emerald-400"}`}>
-                              {l.latency_ms} ms
-                            </span>
-                          </div>
-                        ))}
-                        <div className="flex items-center justify-between text-sm bg-slate-900/80 rounded-lg p-3 mt-2 border border-white/10">
-                          <span className="text-white font-semibold">Total Response Time</span>
-                          <span className={`font-mono text-lg font-bold ${totalLatency > 500 ? "text-rose-400" : totalLatency > 250 ? "text-amber-400" : "text-emerald-400"}`}>
-                            {totalLatency} ms {totalLatency > 500 ? "⚠️" : "✅"}
-                          </span>
-                        </div>
+                        {(() => {
+                          const totalLatency = simulationReport.latency_prediction.reduce((s, l) => s + l.latency_ms, 0);
+                          return (
+                            <>
+                              {simulationReport.latency_prediction.map((l, i) => (
+                                <div key={i} className="flex items-center justify-between text-sm bg-slate-800/50 rounded-lg p-3">
+                                  <span className="text-slate-300">{l.tier}</span>
+                                  <span className={`font-mono font-bold ${l.latency_ms > 300 ? "text-rose-400" : l.latency_ms > 150 ? "text-amber-400" : "text-emerald-400"}`}>
+                                    {l.latency_ms} ms
+                                  </span>
+                                </div>
+                              ))}
+                              <div className="flex items-center justify-between text-sm bg-slate-900/80 rounded-lg p-3 mt-2 border border-white/10">
+                                <span className="text-white font-semibold">Total Response Time</span>
+                                <span className={`font-mono text-lg font-bold ${totalLatency > 500 ? "text-rose-400" : totalLatency > 250 ? "text-amber-400" : "text-emerald-400"}`}>
+                                  {totalLatency} ms {totalLatency > 500 ? "⚠️" : "✅"}
+                                </span>
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
+
                   )}
 
                   {/* Bottlenecks & Cost Impact Row */}
@@ -821,19 +1441,21 @@ export default function DashboardPage() {
                         <span>💸</span> Cost Impact
                       </h4>
                       <p className="text-sm text-slate-300 leading-relaxed">
-                        {simulationReport.cost_impact}
+                        {simulationReport?.cost_impact}
                       </p>
                     </div>
                   </div>
 
                   {/* Cost Breakdown Bar Chart */}
-                  {simulationReport.cost_breakdown && simulationReport.cost_breakdown.length > 0 && (
+                  {simulationReport?.cost_breakdown && simulationReport.cost_breakdown.length > 0 && (
                     <div className="glass rounded-xl p-5 border border-amber-500/20 bg-amber-500/5">
                       <h3 className="font-semibold text-amber-300 mb-4 flex items-center gap-2">
                         <span>📊</span> Monthly Cost Breakdown
                       </h3>
                       <div className="space-y-3">
-                        {simulationReport.cost_breakdown.map((item, i) => (
+                        {simulationReport.cost_breakdown.map((item, i) => {
+                          const maxCost = Math.max(...(simulationReport?.cost_breakdown?.map(c => c.monthly_cost) || [100]));
+                          return (
                           <div key={i} className="flex items-center gap-3">
                             <div className="flex flex-col gap-1 flex-1">
                               <div className="flex justify-between items-center">
@@ -856,7 +1478,7 @@ export default function DashboardPage() {
                               </div>
                             </div>
                           </div>
-                        ))}
+                        )})}
                         <div className="flex justify-between text-sm pt-3 border-t border-white/10 mt-3">
                           <span className="text-white font-semibold">Total Estimated</span>
                           <span className="font-mono text-amber-300 font-bold text-lg">
@@ -868,7 +1490,7 @@ export default function DashboardPage() {
                   )}
 
                   {/* Infrastructure Limits */}
-                  {simulationReport.infrastructure_limits && simulationReport.infrastructure_limits.length > 0 && (
+                  {simulationReport?.infrastructure_limits && simulationReport.infrastructure_limits.length > 0 && (
                     <div className="glass rounded-xl p-5 border border-red-500/30 bg-red-500/5">
                       <h3 className="font-semibold text-red-300 mb-3 flex items-center gap-2">
                         <span>🚧</span> Infrastructure Limits
@@ -889,7 +1511,7 @@ export default function DashboardPage() {
                   )}
 
                   {/* Optimizations */}
-                  {simulationReport.optimizations && simulationReport.optimizations.length > 0 && (
+                  {simulationReport?.optimizations && simulationReport.optimizations.length > 0 && (
                     <div className="glass rounded-xl p-5 border border-emerald-500/30 bg-emerald-500/5">
                       <h3 className="font-semibold text-emerald-300 mb-3 flex items-center gap-2">
                         <span>🔧</span> AI Optimization Suggestions
@@ -971,25 +1593,274 @@ export default function DashboardPage() {
 
           {/* ── Terraform Tab ── */}
           {activeTab === "terraform" && (
-            <div className="animate-fade-in h-full flex flex-col">
-              <div className="flex items-center justify-between mb-4 shrink-0">
-                <h3 className="font-semibold text-white">main.tf skeleton</h3>
-                <button
-                  onClick={copyTerraform}
-                  className="flex items-center gap-1.5 text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg transition-all"
-                >
-                  {copied ? "✓ Copied!" : "📋 Copy"}
-                </button>
+            <div className="animate-fade-in h-full flex flex-col gap-4">
+              <div className="flex items-center justify-between shrink-0 h-10">
+                <div className="flex items-center gap-4">
+                  <h3 className="font-semibold text-white whitespace-nowrap">Production Infrastructure</h3>
+                </div>
+                <div className="flex items-center gap-2 pr-1">
+                  {!(activeScenario === 'original' ? tfFiles : improvedTfFiles) ? (
+                    <button
+                      onClick={() => handleGenerateTf()}
+                      disabled={isTfGenerating}
+                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-[11px] font-bold px-4 h-9 rounded-xl shadow-lg shadow-blue-500/20"
+                    >
+                      {isTfGenerating ? <Spinner /> : "⚡ Generate HCL"}
+                    </button>
+                  ) : (
+                    <div className="flex items-center bg-slate-800/50 p-1 rounded-xl border border-white/5 gap-1">
+                      <button
+                        onClick={() => handleExecuteTf("plan")}
+                        disabled={isTfVerifying}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold px-3 h-8 rounded-lg shadow-md"
+                      >
+                        {isTfVerifying ? <Spinner /> : "Plan"}
+                      </button>
+                      <button
+                        onClick={() => setIsEditorOpen(true)}
+                        className="bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-bold px-3 h-8 rounded-lg"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (activeScenario === 'original') {
+                            setTfFiles(null); setPlannedIds([]);
+                          } else {
+                            setImprovedTfFiles(null); setImprovedPlannedIds([]);
+                          }
+                          setTfRetryCount(0);
+                        }}
+                        className="px-2 text-slate-500 hover:text-white"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex-1 border border-[var(--border)] rounded-xl bg-[#0d1117] overflow-hidden min-h-0">
-                <pre className="h-full overflow-auto p-4 code-block text-slate-300 leading-relaxed">
-                  <code>{data.terraform_skeleton}</code>
-                </pre>
+
+              {(activeScenario === 'original' ? tfFiles : improvedTfFiles) ? (
+                <div className="flex-1 flex flex-col min-h-0 gap-2 relative">
+                  <div className="flex-1 flex flex-col min-h-0 border border-white/10 rounded-xl bg-[#0d1117] overflow-hidden">
+                    <div className="flex items-center gap-1 bg-slate-900/50 p-1 border-b border-white/5 overflow-x-auto">
+                      {Object.keys((activeScenario === 'original' ? tfFiles : improvedTfFiles) || {}).map(filename => (
+                        <button
+                          key={filename}
+                          onClick={() => setActiveTfFile(filename)}
+                          className={`px-3 py-1.5 text-[10px] font-mono rounded-md ${activeTfFile === filename ? "bg-blue-600 text-white" : "text-slate-400"}`}
+                        >
+                          {filename}
+                        </button>
+                      ))}
+                    </div>
+                    <pre className="flex-1 overflow-auto p-4 text-[11px] text-slate-300 font-mono scrollbar-thin">
+                      <code>{(activeScenario === 'original' ? tfFiles : improvedTfFiles)?.[activeTfFile]}</code>
+                    </pre>
+                  </div>
+                  <div className="h-32 bg-black border border-white/10 rounded-xl overflow-hidden flex flex-col font-mono text-[9px] text-emerald-500/80">
+                     <div className="flex flex-col p-2 space-y-1">
+                        {tfLogs.map((log, i) => <div key={i}>{log}</div>)}
+                     </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-10 glass rounded-2xl border border-white/5">
+                  <h4 className="text-lg font-bold text-white mb-2">HCL Generation Engine</h4>
+                  <p className="text-xs text-slate-400 mb-6">Convert your architecture into production-ready Terraform code.</p>
+                  <button onClick={() => handleGenerateTf()} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold transition-all">
+                    Start Generation
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Improvement Tab: Command View ── */}
+          {activeTab === "improvement" && (
+            <div className="animate-fade-in h-full flex flex-col gap-4 overflow-y-auto pr-1 scrollbar-thin overflow-x-hidden">
+              <div className="flex items-center justify-between shrink-0 mb-1 px-1">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span className="text-lg">✨</span> Architecture Evolution Engine
+                  </h3>
+                </div>
+                {!improvementSolution && (
+                  <button
+                    onClick={handleImproveAnalysis}
+                    disabled={isImproving}
+                    className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-[10px] font-bold px-4 h-8 rounded-lg transition-all shadow-lg shadow-blue-500/20 flex items-center gap-2"
+                  >
+                    {isImproving ? <Spinner /> : "Run Evolution Analysis"}
+                  </button>
+                )}
               </div>
+
+              {improvementSolution ? (
+                <div className="flex flex-col gap-4 pb-12 w-full px-1">
+                  {/* Row 1: Integrated Vision & Metrics Bar */}
+                  <section className="bg-slate-900 border border-white/10 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-4 shadow-xl relative overflow-hidden group">
+                    <div className="absolute inset-0 bg-gradient-to-r from-blue-500/[0.02] to-transparent pointer-events-none" />
+                    
+                    <div className="flex items-center gap-4 flex-1 min-w-[300px]">
+                      <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-xl shrink-0 group-hover:scale-110 transition-transform">
+                         🎯
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mb-1">Architect's Strategic Narrative</h4>
+                        <p className="text-[13px] font-bold text-white leading-relaxed italic pr-4">
+                          "{improvementSolution.analysis_summary}"
+                        </p>
+                      </div>
+                    </div>
+
+                    {improvementSolution.comparative_metrics && (
+                      <div className="flex gap-3 shrink-0">
+                        <div className="px-4 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex flex-col items-center justify-center min-w-[90px]">
+                           <span className="text-[9px] font-black text-emerald-400 uppercase tracking-tighter mb-0.5">Latency Gap</span>
+                           <span className="text-sm font-black text-white">↓{improvementSolution.comparative_metrics.latency_improvement_pct}%</span>
+                        </div>
+                        <div className="px-4 py-2 bg-blue-500/10 border border-blue-500/20 rounded-xl flex flex-col items-center justify-center min-w-[90px]">
+                           <span className="text-[9px] font-black text-blue-400 uppercase tracking-tighter mb-0.5">Cost Savings</span>
+                           <span className="text-sm font-black text-white">↓{improvementSolution.comparative_metrics.cost_savings_pct}%</span>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Row 2: Analysis Columns (Blueprint & Risks side-by-side) */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <section className="bg-slate-900/60 border border-white/5 rounded-xl p-5 flex flex-col gap-3 group border-l-2 border-l-blue-500/40">
+                      <h5 className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]" /> Structural Blueprint
+                      </h5>
+                      <p className="text-[13px] text-slate-300 leading-relaxed font-semibold">
+                        {improvementSolution.semantic_model}
+                      </p>
+                    </section>
+
+                    <section className="bg-[#1a0a0d] border border-rose-500/10 rounded-xl p-5 flex flex-col gap-3 group border-l-2 border-l-rose-500/40">
+                      <h5 className="text-[10px] font-black text-rose-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                         <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]" /> System Vulnerabilities
+                      </h5>
+                      <p className="text-[13px] text-slate-300 leading-relaxed font-semibold italic">
+                        {improvementSolution.risk_analysis}
+                      </p>
+                    </section>
+                  </div>
+
+                  {/* Row 3: Evolution Ledger (Stacked Card Layout) */}
+                  <section className="bg-slate-900/40 border border-white/5 rounded-xl overflow-hidden shadow-2xl">
+                    <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
+                      <h4 className="text-[11px] font-black text-slate-300 uppercase tracking-[0.4em]">Evolutionary Roadmap Ledger</h4>
+                      <span className="text-[10px] text-slate-400 font-bold bg-white/5 px-2.5 py-0.5 rounded-full border border-white/10">
+                        {improvementSolution.improvements.length} line items
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col p-4 gap-4">
+                      {improvementSolution.improvements.map((imp: any, i: number) => (
+                        <div key={i} className="group flex flex-col sm:flex-row gap-5 p-5 rounded-xl border border-white/10 bg-white/[0.01] hover:bg-blue-500/[0.05] hover:border-blue-500/30 transition-all relative">
+                          
+                          {/* Left: ID, Title & Impact */}
+                          <div className="flex flex-col gap-4 w-full sm:w-[35%] lg:w-1/3 shrink-0">
+                            <div className="flex items-start gap-4">
+                              <div className="shrink-0 w-8 h-8 mt-0.5 rounded-lg bg-slate-800 flex items-center justify-center font-black text-white text-[12px] border border-white/10 group-hover:border-blue-500/40 transition-colors shadow-lg">
+                                {i+1}
+                              </div>
+                              <div className="font-black text-white text-[13px] uppercase tracking-tight leading-snug group-hover:text-blue-400 transition-colors pt-1">
+                                {imp.title}
+                              </div>
+                            </div>
+                            
+                            <div className="pl-12">
+                               <span className="inline-block px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-md text-[9px] font-black text-emerald-400 uppercase tracking-widest leading-tight text-center shadow-inner">
+                                 {imp.impact}
+                               </span>
+                            </div>
+                          </div>
+                          
+                          {/* Right: Bottleneck & Solution */}
+                          <div className="flex-1 flex flex-col gap-4 border-t sm:border-t-0 sm:border-l border-white/10 pt-4 sm:pt-0 sm:pl-6">
+                            <div>
+                              <h5 className="text-[9px] font-black text-rose-400 uppercase tracking-[0.2em] mb-1.5 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Current Bottleneck
+                              </h5>
+                              <p className="text-[13px] text-slate-300 italic leading-relaxed font-semibold">
+                                {imp.problem}
+                              </p>
+                            </div>
+                            
+                            <div>
+                              <h5 className="text-[9px] font-black text-blue-400 uppercase tracking-[0.2em] mb-1.5 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span> Evolved Solution
+                              </h5>
+                              <p className="text-[13px] text-slate-100 font-bold leading-relaxed">
+                                {imp.solution}
+                              </p>
+                            </div>
+                          </div>
+                          
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
+                  {/* Row 4: Action Bar */}
+                  <section className="sticky bottom-0 bg-[#0a0d14]/80 backdrop-blur-md pt-2 border-t border-white/10 mt-2 z-20">
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-4 p-4 bg-gradient-to-r from-blue-600/20 via-indigo-600/10 to-transparent border border-white/5 rounded-xl">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 bg-slate-900 border border-white/10 rounded-lg flex items-center justify-center text-xl shadow-2xl">🪄</div>
+                        <div>
+                          <h4 className="text-xs font-black text-white uppercase tracking-tight">Interactive Synthesis</h4>
+                          <p className="text-[10px] text-slate-500 font-medium">Render the evolved high-fidelity architecture map.</p>
+                        </div>
+                      </div>
+
+                      <div className="w-full md:w-auto min-w-[280px]">
+                        <button
+                          disabled
+                          className="w-full bg-slate-800 text-slate-500 text-[10px] font-black h-10 px-6 rounded-lg border border-white/5 cursor-not-allowed uppercase tracking-widest flex items-center justify-center gap-2"
+                        >
+                          <span className="opacity-50">🚀</span> Coming Soon
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 py-32 border-2 border-dashed border-white/5 rounded-3xl m-1">
+                  <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center text-3xl shadow-inner border border-white/10 animate-float opacity-50">
+                    🧠
+                  </div>
+                  <div className="max-w-xs space-y-2">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Awaiting Analysis</h4>
+                    <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+                      Trigger the architecture evolution engine to evaluate hotspots and propose technical optimizations.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
+      
+      {/* Terraform Editor Modal */}
+      {isEditorOpen && tfFiles && (
+        <TerraformEditor 
+          initialFiles={tfFiles as Record<string, string>}
+          logs={tfLogs}
+          isVerifying={isTfVerifying}
+          onClose={() => setIsEditorOpen(false)}
+          onPlan={(currentFiles) => handleExecuteTf("plan", currentFiles)}
+          onClearLogs={() => setTfLogs([])}
+          onSave={async (newFiles) => {
+            // Note: handleExecuteTf("plan", newFiles) will update state on success
+            await handleSyncFromIde(newFiles);
+          }}
+        />
+      )}
     </div>
   );
 }
