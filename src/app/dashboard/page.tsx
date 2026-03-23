@@ -270,6 +270,8 @@ export default function DashboardPage() {
       });
       if (!response.ok) throw new Error("Generation failed");
       const result = await response.json();
+      if (result.detail || result.error) throw new Error(result.detail || result.error);
+      
       
       if (activeScenario === 'original') {
         setTfFiles(result.files);
@@ -405,6 +407,7 @@ export default function DashboardPage() {
       });
       if (!res.ok) throw new Error("Improvement analysis failed");
       const result = await res.json();
+      if (result.detail || result.error) throw new Error(result.detail || result.error);
       setImprovementSolution(result);
     } catch (err: any) {
       alert(err.message);

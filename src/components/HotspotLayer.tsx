@@ -368,9 +368,8 @@ const HotspotLayer: React.FC<HotspotLayerProps> = ({
                 {/* Pulsing Aura - Centered via flex to avoid transform override by animate-ping */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div 
-                     className="rounded-full animate-ping opacity-60"
+                     className="w-12 h-12 rounded-full animate-ping opacity-60 shrink-0"
                      style={{ 
-                       width: '300%', height: '300%',
                        backgroundColor: statusColor,
                        animationDuration: pulseDuration
                      }}
