@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeArchitecture } from "@/lib/gemini";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export const dynamic = "force-dynamic";
 
@@ -23,8 +23,8 @@ export async function POST(request: NextRequest) {
       // For the first version of the unified backend, we'll suggest users upload the image directly.
       // Or we can try a basic extraction if mammoth is ready.
       // For now, let's treat it as a TODO or fail gracefully with a message.
-      return NextResponse.json({ 
-        detail: "Word document extraction is currently being ported. Please upload the architecture diagram as an image (PNG/JPG) for now." 
+      return NextResponse.json({
+        detail: "Word document extraction is currently being ported. Please upload the architecture diagram as an image (PNG/JPG) for now."
       }, { status: 400 });
     }
 

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateFullTerraform, fixTerraform, extractTfConfigs, generateFinalPlanSummary } from "@/lib/gemini";
 import { runTerraformSandbox, cleanupSandbox } from "@/lib/terraform";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   try {
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
         const repairResult = await fixTerraform(architectureJson, simulationState, finalFiles, errorMsg, simulationReport);
         finalFiles = repairResult.files; // Update files for next attempt
         finalSummary = repairResult.summary;
-    } else {
+      } else {
         // Final attempt failed, capture warnings and last error
         finalWarnings.push("Internal verification failed. Please check the code for potential syntax or resource errors.");
         finalLastError = verifyResult.stderr || verifyResult.error;
@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
       const finalVerify = await runTerraformSandbox(finalFiles, "plan");
       if (finalVerify.success && finalVerify.stdout) {
         finalSummary = await generateFinalPlanSummary(
-          architectureJson, 
+          architectureJson,
           finalVerify.stdout,
           simulationState,
           componentConfigs

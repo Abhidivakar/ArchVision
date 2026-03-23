@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { suggestImprovements } from "@/lib/gemini";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
         }
 
         const result = await suggestImprovements(architectureJson, simulationReport);
-        
+
         clearInterval(intervalId);
         controller.enqueue(encoder.encode(JSON.stringify(result)));
         controller.close();
