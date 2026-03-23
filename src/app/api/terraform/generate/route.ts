@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateFullTerraform, fixTerraform, extractTfConfigs, generateFinalPlanSummary } from "@/lib/gemini";
 import { runTerraformSandbox, cleanupSandbox } from "@/lib/terraform";
 
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {

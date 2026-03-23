@@ -3,6 +3,7 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, Ta
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const BRAND_BLUE = "1A73E8";
 const BRAND_DARK = "202124";
