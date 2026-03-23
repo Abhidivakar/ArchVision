@@ -1,0 +1,57 @@
+name: Build and Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: arch-vision-491116
+  REGION: us-central1
+  SERVICE_NAME: arch-vision-dashboard
+  SERVICE_ACCOUNT: arch-vision@arch-vision-491116.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    # Required for Google Cloud Workload Identity Federation (if used)
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Authenticate to Google Cloud. 
+      # You must create a Repository Secret in GitHub named `GCP_CREDENTIALS` 
+      # containing the JSON key for a service account that has Cloud Run Admin, 
+      # Cloud Build Editor, and Service Account User permissions.
+      - name: Google Auth
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Deploy directly from source using Cloud Build. 
+      # This skips needing an Artifact Registry repository manually.
+      # We attach your specific execution Service Account here so Vertex AI calls will authorize successfully.
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          source: ./
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          flags: '--allow-unauthenticated --service-account=${{ env.SERVICE_ACCOUNT }}'
+          env_vars: |
+            GCP_PROJECT_ID=${{ env.PROJECT_ID }}
+            GCP_LOCATION=${{ env.REGION }}
+            NEXT_USE_NETLIFY_EDGE=false
+
+      - name: Show Output URL
+        run: echo "Deployed safely to ${{ steps.deploy.outputs.url }}"
