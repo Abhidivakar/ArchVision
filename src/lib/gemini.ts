@@ -1,40 +1,64 @@
 import { VertexAI } from "@google-cloud/vertexai";
 import { GoogleAuth } from 'google-auth-library';
 
-// Initialize Vertex AI with GCP Project and Location
-if (!process.env.GCP_PROJECT_ID) {
-  console.warn("WARNING: GCP_PROJECT_ID is not set in .env");
-}
+let _vertexInstance: VertexAI | null = null;
+let _authInstance: GoogleAuth | null = null;
 
-let credentials;
-if (process.env.GCP_SERVICE_ACCOUNT_KEY) {
-  try {
-    const parsed = JSON.parse(process.env.GCP_SERVICE_ACCOUNT_KEY);
-    credentials = {
-      client_email: parsed.client_email,
-      private_key: parsed.private_key,
+function getVertexAI(): VertexAI {
+  if (!_vertexInstance) {
+    if (!process.env.GCP_PROJECT_ID) {
+      console.warn("WARNING: GCP_PROJECT_ID is not set in environment.");
+    }
+
+    let credentials;
+    if (process.env.GCP_SERVICE_ACCOUNT_KEY) {
+      try {
+        const parsed = JSON.parse(process.env.GCP_SERVICE_ACCOUNT_KEY);
+        credentials = {
+          client_email: parsed.client_email,
+          private_key: parsed.private_key,
+        };
+        console.log("[Auth] Using GCP_SERVICE_ACCOUNT_KEY from environment.");
+      } catch (error) {
+        console.error("Failed to parse GCP_SERVICE_ACCOUNT_KEY json string.");
+      }
+    }
+
+    const vertexSettings: any = {
+      project: process.env.GCP_PROJECT_ID || "build-time-fallback-project",
+      location: process.env.GCP_LOCATION || "us-central1",
     };
-    console.log("[Auth] Using GCP_SERVICE_ACCOUNT_KEY from environment.");
-  } catch (error) {
-    console.error("Failed to parse GCP_SERVICE_ACCOUNT_KEY json string.");
+
+    if (credentials) {
+      vertexSettings.googleAuthOptions = { credentials };
+    }
+
+    _vertexInstance = new VertexAI(vertexSettings);
   }
+  return _vertexInstance;
 }
 
-const vertexSettings: any = {
-  project: process.env.GCP_PROJECT_ID || "",
-  location: process.env.GCP_LOCATION || "us-central1",
-};
-
-if (credentials) {
-  vertexSettings.googleAuthOptions = { credentials };
+function getGoogleAuth(): GoogleAuth {
+  if (!_authInstance) {
+    let credentials;
+    if (process.env.GCP_SERVICE_ACCOUNT_KEY) {
+      try {
+        const parsed = JSON.parse(process.env.GCP_SERVICE_ACCOUNT_KEY);
+        credentials = {
+          client_email: parsed.client_email,
+          private_key: parsed.private_key,
+        };
+      } catch (error) {
+        // Ignored
+      }
+    }
+    _authInstance = new GoogleAuth({
+      scopes: 'https://www.googleapis.com/auth/cloud-platform',
+      credentials
+    });
+  }
+  return _authInstance;
 }
-
-const vertexAI = new VertexAI(vertexSettings);
-
-const auth = new GoogleAuth({
-  scopes: 'https://www.googleapis.com/auth/cloud-platform',
-  credentials
-});
 
 const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const DEFAULT_IMAGEN_MODEL = process.env.IMAGEN_MODEL || "imagen-3.0-generate-001";
@@ -115,7 +139,7 @@ BE CONCISE: Return ONLY the JSON payload. Focus on high-value details to ensure 
 export async function analyzeArchitecture(imageBuffer: Buffer, mimeType: string) {
   // IMPORTANT: The system uses the model defined in DEFAULT_GEMINI_MODEL.
   // Using an invalid model name will cause 403 errors.
-  const model = vertexAI.getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
+  const model = getVertexAI().getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
 
   const request = {
     contents: [
@@ -150,7 +174,7 @@ export async function simulateWorkload(architectureJson: any, simulationState: a
   failureSimulation?: string[],
   isMultiRegion?: boolean
 }) {
-  const model = vertexAI.getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
+  const model = getVertexAI().getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
 
   const archServices = architectureJson.components?.map((c: any) => c.service).filter(Boolean) || [];
   const stateStr = Object.entries(simulationState)
@@ -233,7 +257,7 @@ export async function generateFullTerraform(
   simulationReport?: any,
   errorContext?: string
 ): Promise<{ files: Record<string, string>; summary: string }> {
-  const model = vertexAI.getGenerativeModel({
+  const model = getVertexAI().getGenerativeModel({
     model: DEFAULT_GEMINI_MODEL,
     generationConfig: {
       maxOutputTokens: 65536,
@@ -358,7 +382,7 @@ export async function fixTerraform(
   errorContext: string,
   simulationReport?: any
 ): Promise<{ files: Record<string, string>; summary: string }> {
-  const model = vertexAI.getGenerativeModel({
+  const model = getVertexAI().getGenerativeModel({
     model: DEFAULT_GEMINI_MODEL,
     generationConfig: {
       maxOutputTokens: 65536,
@@ -435,7 +459,7 @@ export async function fixTerraform(
 }
 
 export async function generateDocumentContent(imageBuffer: Buffer, mimeType: string, docType: string, environment: string) {
-  const model = vertexAI.getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
+  const model = getVertexAI().getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
 
   let focus = "Balanced, thorough documentation.";
   let sections = "- Executive Summary\n- Architecture Analysis\n- Security Implementation";
@@ -512,7 +536,7 @@ export async function extractTfConfigs(
   architectureJson: any
 ): Promise<Record<string, string>> {
 
-  const model = vertexAI.getGenerativeModel({
+  const model = getVertexAI().getGenerativeModel({
     model: DEFAULT_GEMINI_MODEL,
     generationConfig: { responseMimeType: "application/json" }
   });
@@ -583,7 +607,7 @@ export async function generateFinalPlanSummary(
   simulationState?: Record<string, number>,
   componentConfigs?: Record<string, string>
 ): Promise<string> {
-  const model = vertexAI.getGenerativeModel({
+  const model = getVertexAI().getGenerativeModel({
     model: DEFAULT_GEMINI_MODEL,
   });
 
@@ -619,7 +643,7 @@ export async function generateFinalPlanSummary(
 
 export async function generateImprovedImage(prompt: string): Promise<string> {
   try {
-    const client = await auth.getClient();
+    const client = await getGoogleAuth().getClient();
     const tokenResponse = await client.getAccessToken();
     const accessToken = tokenResponse.token;
 
@@ -679,7 +703,7 @@ export async function generateImprovedImage(prompt: string): Promise<string> {
 }
 
 export async function suggestImprovements(architectureJson: any, simulationReport: any) {
-  const model = vertexAI.getGenerativeModel({
+  const model = getVertexAI().getGenerativeModel({
     model: DEFAULT_GEMINI_MODEL,
   });
 
