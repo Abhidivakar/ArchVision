@@ -16,12 +16,15 @@ function getVertexAI(): VertexAI {
         const parsed = JSON.parse(process.env.GCP_SERVICE_ACCOUNT_KEY);
         credentials = {
           client_email: parsed.client_email,
-          private_key: parsed.private_key,
+          private_key: parsed.private_key.replace(/\\n/g, '\n'), // Fix Netlify escaping literal newlines
         };
-        console.log("[Auth] Using GCP_SERVICE_ACCOUNT_KEY from environment.");
-      } catch (error) {
-        console.error("Failed to parse GCP_SERVICE_ACCOUNT_KEY json string.");
+        console.log("[Auth] Successfully parsed GCP_SERVICE_ACCOUNT_KEY from environment.");
+      } catch (error: any) {
+        console.error("Failed to parse GCP_SERVICE_ACCOUNT_KEY json string.", error);
+        throw new Error(`Invalid GCP_SERVICE_ACCOUNT_KEY JSON format: ${error.message}`);
       }
+    } else {
+       console.log("[Auth] No GCP_SERVICE_ACCOUNT_KEY found. Relying on Application Default Credentials (ADC). This will fail in Netlify if ADC isn't configured.");
     }
 
     const vertexSettings: any = {
@@ -46,10 +49,10 @@ function getGoogleAuth(): GoogleAuth {
         const parsed = JSON.parse(process.env.GCP_SERVICE_ACCOUNT_KEY);
         credentials = {
           client_email: parsed.client_email,
-          private_key: parsed.private_key,
+          private_key: parsed.private_key.replace(/\\n/g, '\n'),
         };
       } catch (error) {
-        // Ignored
+        console.error("Failed to parse GCP_SERVICE_ACCOUNT_KEY json string in getGoogleAuth.");
       }
     }
     _authInstance = new GoogleAuth({
