@@ -52,6 +52,8 @@ jobs:
             GCP_PROJECT_ID=${{ env.PROJECT_ID }}
             GCP_LOCATION=${{ env.REGION }}
             NEXT_USE_NETLIFY_EDGE=false
+            GEMINI_MODEL=gemini-2.5-pro
+
 
       - name: Show Output URL
         run: echo "Deployed safely to ${{ steps.deploy.outputs.url }}"
