@@ -471,12 +471,13 @@ export default function DashboardPage() {
 ;
 
   const handleDownloadTf = async () => {
-    if (!tfFiles) return;
+    const filesToDownload = activeScenario === 'original' ? tfFiles : improvedTfFiles;
+    if (!filesToDownload) return;
     try {
       const res = await fetch("/api/terraform/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ files: tfFiles, docType: "Advanced", environment: "Production" })
+        body: JSON.stringify({ files: filesToDownload, docType: "Advanced", environment: "Production" })
       });
       if (!res.ok) throw new Error("Download failed");
       const blob = await res.blob();
@@ -1612,6 +1613,13 @@ export default function DashboardPage() {
                     </button>
                   ) : (
                     <div className="flex items-center bg-slate-800/50 p-1 rounded-xl border border-white/5 gap-1">
+                      <button
+                        onClick={handleDownloadTf}
+                        className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold px-3 h-8 rounded-lg shadow-md flex items-center gap-1"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        ZIP
+                      </button>
                       <button
                         onClick={() => handleExecuteTf("plan")}
                         disabled={isTfVerifying}
