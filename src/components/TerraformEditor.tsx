@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 interface TerraformEditorProps {
   initialFiles: Record<string, string>;
@@ -26,25 +26,60 @@ export default function TerraformEditor({
   const [isDirty, setIsDirty] = useState(false);
   const terminalRef = useRef<HTMLDivElement>(null);
 
+  // ── Resizable panels state ──
+  const [sidebarWidth, setSidebarWidth] = useState(240);   // px
+  const [terminalHeight, setTerminalHeight] = useState(220); // px
+  const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
+  const [isDraggingTerminal, setIsDraggingTerminal] = useState(false);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const editorAreaRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (terminalRef.current) {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
   }, [logs]);
 
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (isDraggingSidebar && layoutRef.current) {
+      const rect = layoutRef.current.getBoundingClientRect();
+      const newWidth = e.clientX - rect.left;
+      setSidebarWidth(Math.min(420, Math.max(140, newWidth)));
+    }
+    if (isDraggingTerminal && editorAreaRef.current) {
+      const rect = editorAreaRef.current.getBoundingClientRect();
+      const newHeight = rect.bottom - e.clientY;
+      setTerminalHeight(Math.min(500, Math.max(80, newHeight)));
+    }
+  }, [isDraggingSidebar, isDraggingTerminal]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDraggingSidebar(false);
+    setIsDraggingTerminal(false);
+  }, []);
+
+  useEffect(() => {
+    if (isDraggingSidebar || isDraggingTerminal) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDraggingSidebar, isDraggingTerminal, handleMouseMove, handleMouseUp]);
+
   const handleFileChange = (content: string) => {
     setFiles((prev) => ({ ...prev, [activeFile]: content }));
     setIsDirty(true);
   };
 
-  const handleSaveAndPlan = () => {
-    onSave(files);
-    onPlan(files);
-    setIsDirty(false);
-  };
-
   return (
-    <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 md:p-10 animate-fade-in">
+    // z-[300] ensures it sits above the panel drag handle (z-[200])
+    <div
+      className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 md:p-10 animate-fade-in"
+      style={{ cursor: isDraggingSidebar ? "col-resize" : isDraggingTerminal ? "row-resize" : "default" }}
+    >
       <div className="w-full h-full max-w-7xl bg-[#0d1117] rounded-2xl border border-white/10 shadow-2xl flex flex-col overflow-hidden">
         {/* IDE Header */}
         <div className="h-14 bg-[#161b22] border-b border-white/5 flex items-center justify-between px-6 shrink-0">
@@ -57,7 +92,7 @@ export default function TerraformEditor({
             <div className="h-4 w-px bg-white/10 mx-2" />
             <h2 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
               <span className="text-blue-400">Terraform IDE</span>
-              <span className="text-slate-500 font-normal"> — Production Sandbox</span>
+              <span className="text-slate-500 font-normal">— Production Sandbox</span>
             </h2>
           </div>
 
@@ -66,9 +101,9 @@ export default function TerraformEditor({
               onClick={() => onPlan(files)}
               disabled={isVerifying}
               className={`flex items-center gap-2 h-9 px-5 rounded-xl text-xs font-bold transition-all shadow-lg ${
-                isDirty 
-                ? "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20" 
-                : "bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30"
+                isDirty
+                  ? "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20"
+                  : "bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30"
               }`}
             >
               {isVerifying ? (
@@ -87,11 +122,15 @@ export default function TerraformEditor({
           </div>
         </div>
 
-        {/* IDE Layout */}
-        <div className="flex-1 flex min-h-0">
-          {/* Sidebar / Explorer */}
-          <div className="w-64 bg-[#0d1117] border-r border-white/5 flex flex-col shrink-0">
-            <div className="p-4">
+        {/* IDE Layout — reference element for sidebar drag */}
+        <div ref={layoutRef} className="flex-1 flex min-h-0 overflow-hidden">
+
+          {/* ── Sidebar / Explorer ── */}
+          <div
+            className="bg-[#0d1117] border-r border-white/5 flex flex-col shrink-0 overflow-hidden"
+            style={{ width: sidebarWidth }}
+          >
+            <div className="p-4 overflow-y-auto flex-1">
               <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Explorer</h3>
               <div className="space-y-1">
                 {Object.keys(files).map((filename) => (
@@ -114,39 +153,67 @@ export default function TerraformEditor({
             </div>
           </div>
 
-          {/* Main Editor & Terminal Area */}
-          <div className="flex-1 flex flex-col min-h-0 bg-[#0d1117]">
-            {/* Editor */}
-            <div className="flex-1 relative flex flex-col min-h-0">
-              <div className="flex items-center gap-1 bg-[#161b22] px-3 border-b border-white/5 overflow-x-auto shrink-0">
-                {Object.keys(files).map((filename) => (
-                  <div
-                    key={filename}
-                    className={`relative group h-10 flex items-center min-w-[120px] px-4 cursor-pointer text-xs font-mono transition-all border-b-2 ${
-                      activeFile === filename
-                        ? "text-blue-400 border-blue-500 bg-[#0d1117]"
-                        : "text-slate-500 border-transparent hover:text-slate-300"
-                    }`}
-                    onClick={() => setActiveFile(filename)}
-                  >
-                    <span>{filename}</span>
-                    {activeFile === filename && isDirty && (
-                      <span className="ml-2 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                    )}
-                  </div>
-                ))}
-              </div>
+          {/* ── Sidebar Drag Handle ── */}
+          <div
+            className="w-1 shrink-0 bg-white/5 hover:bg-blue-500/60 cursor-col-resize transition-colors relative group z-10"
+            onMouseDown={(e) => { e.preventDefault(); setIsDraggingSidebar(true); }}
+          >
+            <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 h-8 w-3 rounded-full bg-slate-600 group-hover:bg-blue-500 transition-colors flex flex-col items-center justify-center gap-0.5 pointer-events-none">
+              <div className="w-0.5 h-2 bg-slate-400 group-hover:bg-white rounded-full" />
+              <div className="w-0.5 h-2 bg-slate-400 group-hover:bg-white rounded-full" />
+            </div>
+          </div>
+
+          {/* ── Main Editor & Terminal Area ── */}
+          <div ref={editorAreaRef} className="flex-1 flex flex-col min-h-0 bg-[#0d1117] overflow-hidden">
+
+            {/* File Tabs */}
+            <div className="flex items-center gap-1 bg-[#161b22] px-3 border-b border-white/5 overflow-x-auto shrink-0">
+              {Object.keys(files).map((filename) => (
+                <div
+                  key={filename}
+                  className={`relative group h-10 flex items-center min-w-[120px] px-4 cursor-pointer text-xs font-mono transition-all border-b-2 ${
+                    activeFile === filename
+                      ? "text-blue-400 border-blue-500 bg-[#0d1117]"
+                      : "text-slate-500 border-transparent hover:text-slate-300"
+                  }`}
+                  onClick={() => setActiveFile(filename)}
+                >
+                  <span>{filename}</span>
+                  {activeFile === filename && isDirty && (
+                    <span className="ml-2 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Code Editor */}
+            <div className="flex-1 min-h-0 overflow-hidden">
               <textarea
                 value={files[activeFile]}
                 onChange={(e) => handleFileChange(e.target.value)}
                 spellCheck={false}
-                className="flex-1 bg-[#0d1117] text-slate-300 p-6 font-mono text-[13px] leading-relaxed resize-none focus:outline-none scrollbar-thin scrollbar-thumb-white/10"
+                className="w-full h-full bg-[#0d1117] text-slate-300 p-6 font-mono text-[13px] leading-relaxed resize-none focus:outline-none scrollbar-thin scrollbar-thumb-white/10"
                 placeholder="# Edit your Terraform HCL here..."
               />
             </div>
 
-            {/* Bottom Terminal */}
-            <div className="h-64 bg-black border-t border-white/10 flex flex-col shrink-0">
+            {/* ── Terminal Drag Handle ── */}
+            <div
+              className="h-1 shrink-0 bg-white/5 hover:bg-blue-500/60 cursor-row-resize transition-colors relative group z-10"
+              onMouseDown={(e) => { e.preventDefault(); setIsDraggingTerminal(true); }}
+            >
+              <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 w-8 h-3 rounded-full bg-slate-600 group-hover:bg-blue-500 transition-colors flex items-center justify-center gap-0.5 pointer-events-none">
+                <div className="h-0.5 w-2 bg-slate-400 group-hover:bg-white rounded-full" />
+                <div className="h-0.5 w-2 bg-slate-400 group-hover:bg-white rounded-full" />
+              </div>
+            </div>
+
+            {/* ── Terminal Panel ── */}
+            <div
+              className="bg-black border-t border-white/10 flex flex-col shrink-0 overflow-hidden"
+              style={{ height: terminalHeight }}
+            >
               <div className="h-10 bg-[#161b22] border-b border-white/5 flex items-center justify-between px-6 shrink-0">
                 <div className="flex items-center gap-4">
                   <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Output / Terminal</span>
@@ -155,14 +222,14 @@ export default function TerraformEditor({
                     Live
                   </div>
                 </div>
-                <button 
-                   onClick={onClearLogs}
-                   className="text-[9px] font-bold text-slate-500 hover:text-slate-300 uppercase underline decoration-slate-600 underline-offset-4"
+                <button
+                  onClick={onClearLogs}
+                  className="text-[9px] font-bold text-slate-500 hover:text-slate-300 uppercase underline decoration-slate-600 underline-offset-4"
                 >
                   Clear Terminal
                 </button>
               </div>
-              <div 
+              <div
                 ref={terminalRef}
                 className="flex-1 overflow-auto p-4 font-mono text-[11px] leading-relaxed space-y-1.5 scrollbar-thin scrollbar-thumb-white/10"
               >

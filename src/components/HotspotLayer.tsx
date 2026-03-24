@@ -356,11 +356,11 @@ const HotspotLayer: React.FC<HotspotLayerProps> = ({
                   setTooltip(null);
                   setHoveredId(null);
                 }}
-                className={`relative w-4 h-4 rounded-full transition-all duration-500 hover:scale-[1.5] cursor-pointer
-                  ${isImpacted ? 'bg-red-500 ring-[3px] ring-red-500/40 shadow-[0_0_15px_4px_rgba(239,68,68,0.5)]' 
-                  : (isActive ? 'bg-blue-400 ring-[3px] ring-blue-400/40 shadow-[0_0_15px_4px_rgba(96,165,250,0.5)]' 
-                  : 'bg-indigo-500/90 border border-white/60 shadow-lg')}
-                  ${isNew ? 'bg-cyan-400 ring-[3px] ring-cyan-400/30 shadow-[0_0_15px_4px_rgba(34,211,238,0.5)]' : ''}`}
+                className={`relative w-2.5 h-2.5 rounded-full transition-all duration-500 hover:scale-125 cursor-pointer
+                  ${isImpacted ? 'bg-red-500 ring-[2px] ring-red-500/40 shadow-[0_0_8px_2px_rgba(239,68,68,0.5)]' 
+                  : (isActive ? 'bg-blue-400 ring-[2px] ring-blue-400/40 shadow-[0_0_8px_2px_rgba(96,165,250,0.5)]' 
+                  : 'bg-indigo-500/90 border border-white/60 shadow-md')}
+                  ${isNew ? 'bg-cyan-400 ring-[2px] ring-cyan-400/30 shadow-[0_0_8px_2px_rgba(34,211,238,0.5)]' : ''}`}
                 style={{ 
                    backgroundColor: (isActive || hoveredId === comp.id || isImpacted) ? statusColor : undefined
                 }}
@@ -368,7 +368,7 @@ const HotspotLayer: React.FC<HotspotLayerProps> = ({
                 {/* Pulsing Aura - Centered via flex to avoid transform override by animate-ping */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div 
-                     className="w-12 h-12 rounded-full animate-ping opacity-60 shrink-0"
+                     className="w-6 h-6 rounded-full animate-ping opacity-50 shrink-0"
                      style={{ 
                        backgroundColor: statusColor,
                        animationDuration: pulseDuration

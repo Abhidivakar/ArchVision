@@ -172,10 +172,57 @@ export async function analyzeArchitecture(imageBuffer: Buffer, mimeType: string)
   return JSON.parse(text);
 }
 
+/**
+ * Generates sensible infrastructure configuration defaults for each component,
+ * to pre-fill the simulation configuration sheet in Manual mode.
+ */
+export async function generateComponentDefaults(architectureJson: any): Promise<any[]> {
+  const model = getVertexAI().getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
+
+  const components = architectureJson.components || [];
+  const componentList = components
+    .map((c: any) => `- id: "${c.id}", name: "${c.name}", service: "${c.service}"`)
+    .join("\n");
+
+  const prompt = `
+You are a Google Cloud infrastructure expert.
+Given these architecture components, generate sensible production default configuration values for each.
+For each component, provide 2-4 KEY infrastructure parameters that are most relevant to its service type.
+
+Components:
+${componentList}
+
+Return STRICT JSON array ONLY (no markdown, no explanation):
+[
+  {
+    "component_id": "<id from list above>",
+    "component_name": "<name>",
+    "service": "<service>",
+    "configs": [
+      { "key": "max_instances", "label": "Max Instances", "default": 10, "min": 1, "max": 1000, "unit": "instances" },
+      { "key": "cpu", "label": "CPU Limit", "default": 2, "min": 1, "max": 96, "unit": "vCPU" }
+    ]
+  }
+]
+
+Rules:
+- Use the exact component id from the list
+- Pick configs most relevant to the service (e.g. for Cloud SQL: db_tier, max_connections; for Cloud Run: max_instances, cpu, memory_gb; for Pub/Sub: message_retention_days, max_delivery_attempts)
+- Set realistic production defaults (not minimal toy values)
+- min/max must be sensible ranges for that parameter
+`;
+
+  const result = await retryWithBackoff(() => model.generateContent(prompt));
+  let text = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+  text = text.replace(/^```json\s*/, "").replace(/```$/, "").trim();
+  return JSON.parse(text);
+}
+
 export async function simulateWorkload(architectureJson: any, simulationState: any, options: {
   scenarioPreset?: string,
   failureSimulation?: string[],
-  isMultiRegion?: boolean
+  isMultiRegion?: boolean,
+  serviceConfigs?: Array<{ component_id: string; component_name: string; service: string; configs: Array<{ key: string; label: string; value?: number; default: number; unit: string }> }>
 }) {
   const model = getVertexAI().getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
 
@@ -191,6 +238,24 @@ export async function simulateWorkload(architectureJson: any, simulationState: a
     contextStr += "CRITICAL: You MUST factor these failures into your response (e.g. show failover latency, degraded capacity scaling, specific bottleneck warnings).";
   }
 
+  const isManualMode = options.serviceConfigs && options.serviceConfigs.length > 0;
+
+  let configSection = "";
+  if (isManualMode) {
+    const configLines = options.serviceConfigs!.map(comp => {
+      const params = comp.configs
+        .map(c => `${c.label}: ${(c as any).value ?? c.default} ${c.unit}`)
+        .join(", ");
+      return `  - ${comp.component_name} (${comp.service}): ${params}`;
+    }).join("\n");
+    configSection = `
+USER-DEFINED INFRASTRUCTURE CONFIGURATIONS (Manual Mode):
+${configLines}
+CRITICAL: Base your entire analysis on these EXACT user-defined configurations. Evaluate whether these specific config values can handle the given workload. Call out if any config is under-provisioned.`;
+  } else {
+    configSection = `INFRASTRUCTURE MODE: Auto (AI-Inferred). Assume sensible GCP production defaults for each service. You MUST include an "assumed_configs" array in your response listing what you assumed for each key service.`;
+  }
+
   const prompt = `
 You are an expert Site Reliability Engineer and Cloud Architect.
 
@@ -203,20 +268,22 @@ ${stateStr}
 ADVANCED CONFIGURATION:
 ${contextStr}
 
+${configSection}
+
 Analyze the Infrastructure Impact of this specific workload and configuration on this architecture.
-Return a STRICT JSON response exactly matching this structure (fill in the data realistically based on the provided workload):
+Return a STRICT JSON response exactly matching this structure:
 
 {
   "impact_summary": "A high-level 2-3 sentence summary of how the architecture handles this load.",
   "bottlenecks": [
-    "A specific bottleneck or point of failure (e.g., 'Cloud SQL read replica might lag behind primary due to high write volume.')"
+    "A specific bottleneck or point of failure"
   ],
   "bottleneck_components": [
-    "component-slug-id"  // IDs of components that are stressed (must map to actual components in the architecture)
+    "component-slug-id"
   ],
-  "cost_impact": "Explain how this workload affects the monthly bill (e.g., 'Expect a 3x increase in network egress costs.')",
+  "cost_impact": "Explain how this workload affects the monthly bill.",
   "scaling_suggestions": [
-    "A concrete actionable step to handle this load (e.g., 'Increase the max instances of the App Engine frontend from 10 to 50.')"
+    "A concrete actionable step to handle this load"
   ],
   "scaling_result": [
     { "service": "App Engine", "previous_instances": 4, "new_instances": 18 }
@@ -226,8 +293,7 @@ Return a STRICT JSON response exactly matching this structure (fill in the data 
     { "tier": "Database", "latency_ms": 70 }
   ],
   "cost_breakdown": [
-    { "service": "Compute Engine", "monthly_cost": 2800 },
-    { "service": "Network Egress", "monthly_cost": 3200 }
+    { "service": "Compute Engine", "monthly_cost": 2800 }
   ],
   "optimizations": [
     { "title": "Add Cloud CDN", "description": "Reduce egress cost by caching static assets deeper.", "cost_reduction_percentage": 40 }
@@ -239,7 +305,10 @@ Return a STRICT JSON response exactly matching this structure (fill in the data 
   },
   "infrastructure_limits": [
     { "service": "Cloud SQL", "limit_description": "Connection Limit", "threshold_value": 4000 }
-  ]
+  ]${!isManualMode ? `,
+  "assumed_configs": [
+    { "service": "Cloud Run", "config": "max_instances=10, CPU=2vCPU, Memory=4GB" }
+  ]` : ""}
 }
 `;
 

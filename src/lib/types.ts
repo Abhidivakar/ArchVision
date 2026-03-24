@@ -69,20 +69,46 @@ export interface InfrastructureLimit {
   threshold_value: number;
 }
 
+// ─── Smart Simulation Configuration Types ───
+export type SimulationMode = 'auto' | 'manual';
+
+export interface ServiceConfigParam {
+  key: string;
+  label: string;
+  default: number;
+  value?: number; // user-overridden value
+  min: number;
+  max: number;
+  unit: string;
+}
+
+export interface ComponentConfig {
+  component_id: string;
+  component_name: string;
+  service: string;
+  configs: ServiceConfigParam[];
+}
+
+export interface AssumedConfig {
+  service: string;
+  config: string;
+}
+
 export interface SimulationReport {
   impact_summary: string;
   bottlenecks: string[];
-  bottleneck_components: string[]; // IDs matching components array
+  bottleneck_components: string[];
   cost_impact: string;
   scaling_suggestions: string[];
-  
-  // Phase 6 Advanced Metrics
   scaling_result: ScalingResult[];
   latency_prediction: LatencyPrediction[];
   cost_breakdown: CostBreakdown[];
   optimizations: OptimizationSuggestion[];
   carbon_footprint: CarbonFootprint;
   infrastructure_limits: InfrastructureLimit[];
+  assumed_configs?: AssumedConfig[]; // present only in Auto mode
+  simulation_mode?: SimulationMode;
+  used_configs?: ComponentConfig[]; // present only in Manual mode
 }
 
 export interface CalibrationOverride {

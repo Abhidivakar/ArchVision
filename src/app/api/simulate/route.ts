@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   try {
     const payload = await request.json();
-    const { architectureJson, simulationState, scenarioPreset, failureSimulation, isMultiRegion } = payload;
+    const { architectureJson, simulationState, scenarioPreset, failureSimulation, isMultiRegion, serviceConfigs } = payload;
 
     if (!architectureJson) {
       return NextResponse.json({ detail: "Missing architecture JSON" }, { status: 400 });
@@ -16,10 +16,17 @@ export async function POST(request: NextRequest) {
     const data = await simulateWorkload(architectureJson, simulationState, {
       scenarioPreset,
       failureSimulation,
-      isMultiRegion
+      isMultiRegion,
+      serviceConfigs
     });
 
-    return NextResponse.json({ report: data });
+    const enrichedReport = {
+      ...data,
+      simulation_mode: serviceConfigs && serviceConfigs.length > 0 ? "manual" : "auto",
+      used_configs: serviceConfigs || null
+    };
+
+    return NextResponse.json({ report: enrichedReport });
   } catch (error: any) {
     console.error("Simulation API Error:", error);
     return NextResponse.json(

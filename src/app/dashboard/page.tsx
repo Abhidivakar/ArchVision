@@ -32,6 +32,13 @@ export default function DashboardPage() {
   const [failureSimulation, setFailureSimulation] = useState<string[]>([]);
   const [plannedIds, setPlannedIds] = useState<string[]>([]);
 
+  // Smart Simulation Mode
+  const [simMode, setSimMode] = useState<'auto' | 'manual'>('auto');
+  const [serviceConfigs, setServiceConfigs] = useState<any[]>([]);
+  const [isLoadingConfigSheet, setIsLoadingConfigSheet] = useState(false);
+  const [configSheetVersion, setConfigSheetVersion] = useState(0);
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+
   // Advanced Terraform State
   const [tfFiles, setTfFiles] = useState<Record<string, string> | null>(null);
   const [tfSummary, setTfSummary] = useState<string>("");
@@ -45,7 +52,13 @@ export default function DashboardPage() {
   const [tfSplitRatio, setTfSplitRatio] = useState(0.6); // 60% top, 40% bottom
   const [isResizing, setIsResizing] = useState(false);
   const [tfRetryCount, setTfRetryCount] = useState(0);
+  const [isTfAborted, setIsTfAborted] = useState(false);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+
+  // Resizable panels state
+  const [panelWidthPct, setPanelWidthPct] = useState(58); // Left panel starts at 58%
+  const [isDraggingPanel, setIsDraggingPanel] = useState(false);
+  const panelContainerRef = useRef<HTMLDivElement>(null);
 
   // New Global Scenario States
   const [activeScenario, setActiveScenario] = useState<'original' | 'improved'>('original');
@@ -217,7 +230,8 @@ export default function DashboardPage() {
         simulationState,
         scenarioPreset,
         failureSimulation,
-        isMultiRegion
+        isMultiRegion,
+        simMode === 'manual' && serviceConfigs.length > 0 ? serviceConfigs : undefined
       );
       if (activeScenario === 'original') {
         setSimulationReport(res.report);
@@ -233,6 +247,32 @@ export default function DashboardPage() {
     }
   };
 
+  const handleSwitchToManual = async () => {
+    setSimMode('manual');
+    if (serviceConfigs.length > 0) return; // already loaded
+    const dataToUse = activeScenario === 'original' ? data : improvedData;
+    if (!dataToUse) return;
+    setIsLoadingConfigSheet(true);
+    try {
+      const res = await fetch('/api/simulate/defaults', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ architectureJson: dataToUse })
+      });
+      const json = await res.json();
+      // Inject a `value` field initialised to the AI default so UI can track edits
+      const withValues = (json.defaults || []).map((comp: any) => ({
+        ...comp,
+        configs: comp.configs.map((c: any) => ({ ...c, value: c.default }))
+      }));
+      setServiceConfigs(withValues);
+    } catch (e) {
+      console.error('Failed to load config defaults', e);
+    } finally {
+      setIsLoadingConfigSheet(false);
+    }
+  };
+
   const getTrafficVolume = () => {
     if (simulationState["rps"]) {
       return (simulationState["rps"] - 10) / (5000 - 10);
@@ -240,9 +280,50 @@ export default function DashboardPage() {
     return 0.1;
   };
 
+  const handleDownloadConfig = () => {
+    const exportData = {
+      version: '1.0',
+      generated_at: new Date().toISOString(),
+      description: 'ArchVision simulation infrastructure configuration',
+      service_configs: serviceConfigs
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'archvision-sim-config.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleUploadConfig = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target?.result as string);
+        const configs = parsed.service_configs || parsed;
+        if (Array.isArray(configs)) {
+          setServiceConfigs(configs.map((comp: any) => ({
+            ...comp,
+            configs: comp.configs.map((c: any) => ({ ...c, value: c.value ?? c.default }))
+          })));
+        } else {
+          alert('Invalid config file format. Expected service_configs array.');
+        }
+      } catch {
+        alert('Failed to parse config file. Make sure it is valid JSON.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const addLog = (msg: string) => {
     setTfLogs(prev => [...prev.slice(-49), `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
+
   const handleGenerateTf = async (errorLog?: string, autoPlan?: boolean, overrideFiles?: Record<string, string>) => {
     const dataToUse = activeScenario === 'original' ? data : improvedData;
     const simReportToUse = activeScenario === 'original' ? simulationReport : improvedSimReport;
@@ -288,9 +369,11 @@ export default function DashboardPage() {
       sendNotification("Terraform Code Ready", "Production-grade Terraform configurations have been generated successfully.");
       addLog("Success: Terraform code generated based on current simulation sizing.");
       
-      if (autoPlan) {
+      if (autoPlan && !isTfAborted) {
         addLog("Auto-Fix complete. Triggering automatic Plan verification...");
         setTimeout(() => handleExecuteTf("plan", result.files), 1000);
+      } else if (isTfAborted) {
+        addLog("Auto-fix aborted by user.");
       }
     } catch (e: any) {
       addLog(`Error: ${e.message}`);
@@ -355,13 +438,14 @@ export default function DashboardPage() {
         addLog(`Terraform ${command} failed.`);
         
         // Auto-fix logic - Reduced to 1 retry from frontend for better stability
-        if (command === "plan" && tfRetryCount < 1) {
-          addLog("--- CRITICAL: Plan error detected. Triggering Intelligent Auto-Fix... ---");
+        if (command === "plan" && tfRetryCount < 1 && !isTfAborted) {
+          addLog("--- Plan error detected. Triggering 1 intelligent auto-fix attempt... ---");
           setTfRetryCount(prev => prev + 1);
           const errorMsg = result.stderr || result.error || "Unknown error during plan";
           setTimeout(() => handleGenerateTf(errorMsg, true, filesToUse), 1500);
         } else if (command === "plan") {
-           addLog("--- Max retry attempts reached. Please use the IDE 'Edit' button to fix manually. ---");
+           addLog("--- Max retry (1) reached or stopped. Please use the 'Edit' button to fix manually. ---");
+           setTfRetryCount(0);
         }
       }
     } catch (e: any) {
@@ -568,6 +652,30 @@ export default function DashboardPage() {
 
   <h2>Impact Summary</h2>
   <div class="card">${report.impact_summary}</div>
+
+  ${(report as any).simulation_mode === 'manual' && (report as any).used_configs?.length ? `
+  <h2>⚙️ User-Defined Configurations (Manual)</h2>
+  <div class="card green">
+    ${(report as any).used_configs.map((comp: any) => `
+      <div class="opt-card" style="margin-bottom:12px;">
+        <div class="opt-title" style="color:#0f172a;font-size:13px;border-bottom:1px solid #e2e8f0;padding-bottom:4px;margin-bottom:6px;">🔧 ${comp.component_name} <span style="font-size:11px;font-weight:normal;color:#64748b">(${comp.service})</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          ${comp.configs.map((cfg: any) => `
+            <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:2px 0;">
+              <span class="opt-desc" style="font-size:11px;">${cfg.label}:</span>
+              <span class="mono" style="color:#059669;font-weight:700;font-size:11px;">${cfg.value ?? cfg.default} <span style="font-size:9px;color:#64748b;font-family:sans-serif;">${cfg.unit}</span></span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `).join('')}
+  </div>` : (report as any).assumed_configs?.length ? `
+  <h2>🤖 AI-Assumed Configurations (Auto)</h2>
+  <div class="card blue">
+    ${(report as any).assumed_configs.map((ac: any) => `
+      <div class="list-item"><span style="color:#2563eb">▸</span><span><strong>${ac.service}:</strong> ${ac.config}</span></div>
+    `).join('')}
+  </div>` : ''}
 
   ${report.scaling_result?.length ? `
   <h2>📈 Infrastructure Scaling</h2>
@@ -921,9 +1029,24 @@ export default function DashboardPage() {
     : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col md:flex-row bg-[#020817] text-slate-200 overflow-hidden print:relative print:overflow-auto">
+    <div
+      ref={panelContainerRef}
+      className="fixed inset-0 z-50 flex flex-col md:flex-row bg-[#020817] text-slate-200 overflow-hidden print:relative print:overflow-auto"
+      onMouseMove={(e) => {
+        if (!isDraggingPanel || !panelContainerRef.current) return;
+        const rect = panelContainerRef.current.getBoundingClientRect();
+        const rawPct = ((e.clientX - rect.left) / rect.width) * 100;
+        setPanelWidthPct(Math.min(80, Math.max(20, rawPct)));
+      }}
+      onMouseUp={() => setIsDraggingPanel(false)}
+      onMouseLeave={() => setIsDraggingPanel(false)}
+      style={{ cursor: isDraggingPanel ? 'col-resize' : 'default' }}
+    >
       {/* ── LEFT PANEL: Diagram ── */}
-      <div className="relative flex flex-col w-full md:w-3/5 h-1/2 md:h-full border-b md:border-b-0 md:border-r border-[var(--border)]">
+      <div
+        className="relative flex flex-col h-1/2 md:h-full border-b md:border-b-0 shrink-0"
+        style={{ width: `${panelWidthPct}%` }}
+      >
         {/* Topbar */}
         <div className="flex items-center justify-between px-5 py-3 bg-surface/80 backdrop-blur border-b border-[var(--border)] shrink-0 print:hidden">
           <div className="flex items-center gap-3">
@@ -1018,8 +1141,23 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ── DRAG HANDLE between panels ── */}
+      <div
+        className="hidden md:flex w-1 shrink-0 items-center justify-center relative group cursor-col-resize bg-[var(--border)] hover:bg-blue-500/60 transition-colors duration-150 z-[200]"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          setIsDraggingPanel(true);
+        }}
+      >
+        {/* Visual grab indicator */}
+        <div className="absolute h-8 w-3 rounded-full bg-slate-600 group-hover:bg-blue-500 transition-colors flex flex-col items-center justify-center gap-0.5 pointer-events-none">
+          <div className="w-0.5 h-2 bg-slate-400 group-hover:bg-white rounded-full" />
+          <div className="w-0.5 h-2 bg-slate-400 group-hover:bg-white rounded-full" />
+        </div>
+      </div>
+
       {/* ── RIGHT PANEL: Info ── */}
-      <div className="flex flex-col w-full md:w-2/5 h-1/2 md:h-full shrink-0 bg-[#020817]">
+      <div className="flex flex-col flex-1 min-w-0 h-1/2 md:h-full bg-[#020817]">
         {/* Tabs */}
         <div className="flex border-b border-[var(--border)] bg-surface/80 px-2 pt-1 gap-0.5 shrink-0 overflow-x-auto print:hidden">
           {(
@@ -1145,6 +1283,16 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="space-y-5">
+                  {/* Component Header */}
+                  <div className="glass rounded-xl border border-[var(--border)] p-4 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-600/20 border border-blue-500/20 flex items-center justify-center text-xl shrink-0">
+                      🏗️
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-base font-bold text-white truncate">{activeComp?.name}</div>
+                      <div className="text-xs text-blue-400 truncate">{activeComp?.service}</div>
+                    </div>
+                  </div>
                   <div className="glass rounded-xl border border-[var(--border)] p-5">
                     <h3 className="font-semibold text-white flex items-center gap-2 mb-3 pb-2 border-b border-[var(--border)]">
                       <span>🏗️</span> Architecture Role
@@ -1308,9 +1456,124 @@ export default function DashboardPage() {
                       ))}
                     </div>
 
+                    {/* ── Simulation Mode Toggle ── */}
+                    <div className="pt-4 border-t border-[var(--border)]">
+                      <label className="text-xs text-slate-400 uppercase tracking-wider mb-2 block">Simulation Mode</label>
+                      <div className="flex items-center gap-2 bg-slate-800/70 rounded-xl p-1 w-fit">
+                        <button
+                          onClick={() => setSimMode('auto')}
+                          className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                            simMode === 'auto'
+                              ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          🤖 Auto
+                        </button>
+                        <button
+                          onClick={handleSwitchToManual}
+                          className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                            simMode === 'manual'
+                              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/20'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          ⚙️ Manual Config
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1.5">
+                        {simMode === 'auto'
+                          ? 'AI assumes sensible production defaults. Report will show what was assumed.'
+                          : 'Define exact infrastructure configs per service for precise simulation'}
+                      </p>
+                    </div>
+
+                    {/* ── Manual Config Sheet ── */}
+                    {simMode === 'manual' && (
+                      <div className="pt-4 border-t border-[var(--border)] space-y-3 animate-fade-in">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-widest">⚙️ Infrastructure Configuration</h4>
+                          {serviceConfigs.length > 0 && (
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setIsConfigModalOpen(true)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-600/20 hover:bg-emerald-600/40 border border-emerald-500/30 text-emerald-400 transition-all"
+                              >
+                                ⛶ Open Full Editor
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setServiceConfigs(prev => prev.map(comp => ({
+                                    ...comp,
+                                    configs: comp.configs.map((c: any) => ({ ...c, value: c.default }))
+                                  })));
+                                }}
+                                className="text-[10px] text-slate-500 hover:text-slate-300 underline"
+                              >
+                                Reset defaults
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {isLoadingConfigSheet ? (
+                          <div className="flex items-center gap-2 text-slate-400 text-sm py-4">
+                            <Spinner /> Generating AI-recommended defaults...
+                          </div>
+                        ) : serviceConfigs.length === 0 ? (
+                          <div className="text-slate-500 text-sm py-2">Click "Manual Config" above to load defaults.</div>
+                        ) : (
+                          <div className="space-y-4 max-h-72 overflow-y-auto pr-1">
+                            {serviceConfigs.map((comp: any) => (
+                              <div key={comp.component_id} className="glass rounded-xl border border-[var(--border)] p-4">
+                                <div className="flex items-center gap-2 mb-3">
+                                  <span className="text-base">🔧</span>
+                                  <div>
+                                    <div className="text-xs font-bold text-white">{comp.component_name}</div>
+                                    <div className="text-[10px] text-slate-500">{comp.service}</div>
+                                  </div>
+                                </div>
+                                <div className="space-y-3">
+                                  {comp.configs.map((cfg: any) => (
+                                    <div key={cfg.key}>
+                                      <div className="flex justify-between text-[11px] mb-1 text-slate-300">
+                                        <span>{cfg.label}</span>
+                                        <span className="font-mono text-emerald-400 font-bold">
+                                          {cfg.value ?? cfg.default} <span className="text-slate-500">{cfg.unit}</span>
+                                        </span>
+                                      </div>
+                                      <input
+                                        type="range"
+                                        min={cfg.min}
+                                        max={cfg.max}
+                                        value={cfg.value ?? cfg.default}
+                                        onChange={(e) => {
+                                          setServiceConfigs(prev => prev.map((c: any) =>
+                                            c.component_id === comp.component_id
+                                              ? { ...c, configs: c.configs.map((p: any) => p.key === cfg.key ? { ...p, value: Number(e.target.value) } : p) }
+                                              : c
+                                          ));
+                                        }}
+                                        className="w-full accent-emerald-500"
+                                      />
+                                      <div className="flex justify-between text-[9px] text-slate-600 mt-0.5 font-mono">
+                                        <span>{cfg.min}</span>
+                                        <span className="text-slate-500 text-[9px]">AI default: {cfg.default} {cfg.unit}</span>
+                                        <span>{cfg.max}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     <button
                       onClick={handleSimulate}
-                      disabled={isSimulating}
+                      disabled={isSimulating || (simMode === 'manual' && isLoadingConfigSheet)}
                       className="w-full mt-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:cursor-wait text-white font-medium py-3 rounded-xl transition-all shadow-lg shadow-blue-500/20"
                     >
                       {isSimulating ? (
@@ -1318,9 +1581,8 @@ export default function DashboardPage() {
                           <Spinner /> Running AI Analysis...
                         </div>
                       ) : (
-                        simulationReport ? "Re-simulate Request" : "Run Simulation Request"
+                        simulationReport ? "Re-simulate" : "Run Simulation"
                       )}
-
                     </button>
                   </div>
                 ) : (
@@ -1333,6 +1595,67 @@ export default function DashboardPage() {
               {/* ── ADVANCED REPORT ── */}
               {simulationReport && (
                 <div className="space-y-5 animate-fade-in" id="simulation-report">
+
+                  {/* ── Auto Mode: Assumed Configs Card ── */}
+                  {(simulationReport as any).assumed_configs && (simulationReport as any).assumed_configs.length > 0 && (
+                    <div className="glass rounded-xl border border-blue-500/30 bg-blue-500/5 p-5 animate-fade-in">
+                      <h3 className="font-semibold text-blue-400 flex items-center gap-2 mb-3 pb-2 border-b border-blue-500/20">
+                        <span>🤖</span> AI-Assumed Infrastructure Configurations
+                        <span className="ml-auto text-[10px] text-slate-500 font-normal">Auto Mode</span>
+                      </h3>
+                      <div className="grid grid-cols-1 gap-2">
+                        {(simulationReport as any).assumed_configs.map((ac: any, i: number) => (
+                          <div key={i} className="flex items-start gap-3">
+                            <span className="text-blue-400 shrink-0 mt-0.5">▸</span>
+                            <div>
+                              <span className="text-xs font-bold text-slate-200">{ac.service}:</span>
+                              <span className="text-xs text-slate-400 ml-1">{ac.config}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-3 pt-2 border-t border-blue-500/10">
+                        Switch to <strong className="text-blue-400">Manual Config</strong> mode to define these values yourself for a more accurate simulation.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* ── Manual Mode: User-Defined Configs Card ── */}
+                  {(simulationReport as any).simulation_mode === 'manual' && (simulationReport as any).used_configs && (simulationReport as any).used_configs.length > 0 && (
+                    <div className="glass rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5 animate-fade-in">
+                      <h3 className="font-semibold text-emerald-400 flex items-center gap-2 mb-3 pb-2 border-b border-emerald-500/20">
+                        <span>⚙️</span> User-Defined Infrastructure Configurations
+                        <span className="ml-auto text-[10px] text-slate-500 font-normal">Manual Mode</span>
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {(simulationReport as any).used_configs.map((comp: any) => (
+                          <div key={comp.component_id} className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
+                            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-700/50">
+                              <span className="text-sm">🔧</span>
+                              <div>
+                                <div className="text-xs font-bold text-white">{comp.component_name}</div>
+                                <div className="text-[10px] text-emerald-500/80">{comp.service}</div>
+                              </div>
+                            </div>
+                            <div className="space-y-1.5">
+                              {comp.configs.map((cfg: any, i: number) => (
+                                <div key={i} className="flex justify-between items-center text-[11px] border-l-2 border-emerald-500/30 pl-2">
+                                  <span className="text-slate-400 truncate pr-2" title={cfg.label}>{cfg.label}:</span>
+                                  <span className="font-mono text-emerald-400 font-bold bg-emerald-950/30 px-1 rounded shrink-0">
+                                    {cfg.value ?? cfg.default} <span className="text-slate-500 text-[9px] font-sans">{cfg.unit}</span>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-3 pt-2 border-t border-emerald-500/10">
+                        The simulation evaluated the architecture strictly using these specific constraints.
+                      </p>
+                    </div>
+                  )}
+
                   {/* Export Button */}
                   <div className="flex justify-end print:hidden">
                     <div className="flex gap-3">
@@ -1627,6 +1950,20 @@ export default function DashboardPage() {
                       >
                         {isTfVerifying ? <Spinner /> : "Plan"}
                       </button>
+                      {(isTfVerifying || isTfGenerating) && (
+                        <button
+                          onClick={() => {
+                            setIsTfAborted(true);
+                            setIsTfVerifying(false);
+                            setIsTfGenerating(false);
+                            setTfRetryCount(0);
+                            addLog("⛔ Auto-fix loop stopped by user.");
+                          }}
+                          className="bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold px-3 h-8 rounded-lg shadow-md flex items-center gap-1"
+                        >
+                          ⛔ Stop
+                        </button>
+                      )}
                       <button
                         onClick={() => setIsEditorOpen(true)}
                         className="bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-bold px-3 h-8 rounded-lg"
@@ -1872,6 +2209,161 @@ export default function DashboardPage() {
           }}
         />
       )}
+
+      {/* Smart Simulation Config Editor Modal */}
+      {isConfigModalOpen && (
+        <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 lg:p-10 animate-fade-in">
+          <div className="bg-slate-900 border border-[var(--border)] rounded-2xl w-full max-w-5xl max-h-full flex flex-col shadow-2xl overflow-hidden">
+            
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-[var(--border)] flex justify-between items-center bg-slate-800/50">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">⚙️</span>
+                <div>
+                  <h3 className="font-bold text-lg text-emerald-400">Infrastructure Configuration Editor</h3>
+                  <p className="text-xs text-slate-400">Configure exact service sizes and hardware profiles for simulation</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="bg-slate-800/80 rounded-lg p-1 flex gap-1 border border-[var(--border)]">
+                  <input
+                    type="file"
+                    id="config-upload"
+                    accept=".json"
+                    className="hidden"
+                    onChange={handleUploadConfig}
+                  />
+                  <label
+                    htmlFor="config-upload"
+                    className="px-3 py-1.5 text-xs font-semibold hover:bg-slate-700 rounded-md cursor-pointer transition-colors flex items-center gap-1.5 text-slate-300"
+                    title="Upload config JSON"
+                  >
+                    <span>▲ Upload</span>
+                  </label>
+                  <div className="w-[1px] bg-slate-700 my-1"></div>
+                  <button
+                    onClick={handleDownloadConfig}
+                    className="px-3 py-1.5 text-xs font-semibold hover:bg-slate-700 rounded-md transition-colors flex items-center gap-1.5 text-slate-300"
+                    title="Download config JSON"
+                  >
+                    <span>▼ Download</span>
+                  </button>
+                </div>
+                <button
+                  onClick={() => setIsConfigModalOpen(false)}
+                  className="p-2 hover:bg-slate-800 rounded-full transition-colors text-slate-400 hover:text-white"
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-6 bg-slate-900/50">
+              {serviceConfigs.length === 0 ? (
+                <div className="text-center py-20 text-slate-500">
+                  <p>No configuration data available.</p>
+                  <p className="text-sm mt-2">Generate AI defaults first before opening the editor.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {serviceConfigs.map((comp: any) => (
+                    <div key={comp.component_id} className="glass rounded-xl border border-[var(--border)] p-5 relative group">
+                      <div className="flex items-start gap-3 mb-4">
+                        <span className="text-2xl">🔧</span>
+                        <div className="pr-4">
+                          <div className="font-bold text-white text-base">{comp.component_name}</div>
+                          <div className="text-xs text-emerald-500/80 mt-0.5">{comp.service}</div>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-5">
+                        {comp.configs.map((cfg: any) => (
+                          <div key={cfg.key} className="bg-slate-800/30 p-3 rounded-lg border border-slate-700/50">
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="text-xs font-medium text-slate-300">{cfg.label}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-emerald-400 text-sm font-bold bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-900/50">
+                                  {cfg.value ?? cfg.default}
+                                </span>
+                                <span className="text-slate-500 text-[10px] w-10">{cfg.unit}</span>
+                              </div>
+                            </div>
+                            <div className="px-1">
+                              <input
+                                type="range"
+                                min={cfg.min}
+                                max={cfg.max}
+                                value={cfg.value ?? cfg.default}
+                                onChange={(e) => {
+                                  setServiceConfigs(prev => prev.map((c: any) =>
+                                    c.component_id === comp.component_id
+                                      ? { ...c, configs: c.configs.map((p: any) => p.key === cfg.key ? { ...p, value: Number(e.target.value) } : p) }
+                                      : c
+                                  ));
+                                }}
+                                className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                              />
+                            </div>
+                            <div className="flex justify-between text-[10px] mt-1.5 font-mono">
+                              <span className="text-slate-600">{cfg.min}</span>
+                              <span className="text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">
+                                AI ref: {cfg.default}
+                              </span>
+                              <span className="text-slate-600">{cfg.max}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-[var(--border)] bg-slate-800/80 flex justify-between items-center">
+              <button
+                onClick={() => {
+                  setServiceConfigs(prev => prev.map(comp => ({
+                    ...comp,
+                    configs: comp.configs.map((c: any) => ({ ...c, value: c.default }))
+                  })));
+                }}
+                className="text-sm text-slate-400 hover:text-white px-4 py-2 hover:bg-slate-700 rounded-lg transition-colors"
+                disabled={serviceConfigs.length === 0}
+              >
+                Reset to AI Defaults
+              </button>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setIsConfigModalOpen(false)}
+                  className="px-6 py-2 rounded-xl text-sm font-semibold bg-slate-700 hover:bg-slate-600 text-white transition-all shadow-md"
+                >
+                  Close & Keep Changes
+                </button>
+                <button
+                  onClick={() => {
+                    setIsConfigModalOpen(false);
+                    if (!isSimulating) {
+                      handleSimulate();
+                    }
+                  }}
+                  disabled={isSimulating || serviceConfigs.length === 0}
+                  className="px-6 py-2 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white transition-all shadow-lg shadow-blue-500/20"
+                >
+                  Run Simulation Now
+                </button>
+              </div>
+            </div>
+            
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

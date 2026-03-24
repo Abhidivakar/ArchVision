@@ -61,7 +61,8 @@ export async function runSimulation(
   simulationState: Record<string, number>,
   scenarioPreset: string = "custom",
   failureSimulation: string[] = [],
-  isMultiRegion: boolean = false
+  isMultiRegion: boolean = false,
+  serviceConfigs?: any[]
 ) {
   const payload = {
     architectureJson,
@@ -69,6 +70,7 @@ export async function runSimulation(
     scenarioPreset,
     failureSimulation,
     isMultiRegion,
+    serviceConfigs,
   };
 
   const res = await fetch(`${API_BASE}/simulate`, {
