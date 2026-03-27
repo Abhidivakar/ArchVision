@@ -6,13 +6,13 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const { architectureJson } = await request.json();
+    const { architectureJson, provider } = await request.json();
 
     if (!architectureJson) {
       return NextResponse.json({ detail: "Missing architecture JSON" }, { status: 400 });
     }
 
-    const defaults = await generateComponentDefaults(architectureJson);
+    const defaults = await generateComponentDefaults(architectureJson, provider);
     return NextResponse.json({ defaults });
   } catch (error: any) {
     console.error("[Sim Defaults] Error:", error);

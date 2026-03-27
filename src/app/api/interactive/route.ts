@@ -9,6 +9,7 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File;
+    const provider = (formData.get("provider") as string) || "GCP";
 
     if (!file) {
       return NextResponse.json({ detail: "No file uploaded" }, { status: 400 });
@@ -32,8 +33,8 @@ export async function POST(request: NextRequest) {
       mimeType = "image/png"; // Fallback
     }
 
-    const data = await analyzeArchitecture(buffer, mimeType);
-    return NextResponse.json(data);
+    const data = await analyzeArchitecture(buffer, mimeType, provider as any);
+    return NextResponse.json({ ...data, provider });
   } catch (error: any) {
     console.error("Interactive API Error:", error);
     return NextResponse.json(

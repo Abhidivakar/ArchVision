@@ -62,7 +62,8 @@ function parseSVG(svgContent: string): VectorNode[] {
     
     // Attempt to guess service from ID/Class
     const serviceString = (el.getAttribute("id") || "") + " " + (el.getAttribute("class") || "");
-    if (!serviceString.toLowerCase().includes("gcp") && !serviceString.toLowerCase().includes("cloud")) {
+    const lowerServiceStr = serviceString.toLowerCase();
+    if (!lowerServiceStr.includes("gcp") && !lowerServiceStr.includes("aws") && !lowerServiceStr.includes("azure") && !lowerServiceStr.includes("cloud")) {
         // Skip non-cloud elements if possible, but for now let's be inclusive
     }
 

@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   try {
     const payload = await request.json();
-    const { architectureJson, simulationState, scenarioPreset, failureSimulation, isMultiRegion, serviceConfigs } = payload;
+    const { architectureJson, simulationState, scenarioPreset, failureSimulation, isMultiRegion, serviceConfigs, provider } = payload;
 
     if (!architectureJson) {
       return NextResponse.json({ detail: "Missing architecture JSON" }, { status: 400 });
@@ -17,7 +17,8 @@ export async function POST(request: NextRequest) {
       scenarioPreset,
       failureSimulation,
       isMultiRegion,
-      serviceConfigs
+      serviceConfigs,
+      provider
     });
 
     const enrichedReport = {

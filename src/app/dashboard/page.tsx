@@ -2,18 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ArchComponent, InteractiveResponse, SimulationReport, CalibrationOverride } from "@/lib/types";
+import type { ArchComponent, InteractiveResponse, SimulationReport, CalibrationOverride, CloudProvider } from "@/lib/types";
 import HotspotLayer from "@/components/HotspotLayer";
-import { runSimulation } from "@/lib/api";
+import { runSimulation, generateDocFromJson } from "@/lib/api";
 import { playSuccessSound, playTfSuccessSound } from "@/lib/audio";
 import { requestNotificationPermission, sendNotification } from "@/lib/notifications";
 import TerraformEditor from "@/components/TerraformEditor";
 
-type Tab = "overview" | "component" | "simulation" | "terraform" | "improvement";
+type Tab = "overview" | "component" | "simulation" | "terraform" | "improvement" | "documents";
 
 export default function DashboardPage() {
   const router = useRouter();
   const imageRef = useRef<HTMLImageElement>(null);
+  const tabScrollRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<InteractiveResponse | null>(null);
   const [imageUrl, setImageUrl] = useState<string>("");
   const [activeTab, setActiveTab] = useState<Tab>("overview");
@@ -43,6 +44,7 @@ export default function DashboardPage() {
   const [tfFiles, setTfFiles] = useState<Record<string, string> | null>(null);
   const [tfSummary, setTfSummary] = useState<string>("");
   const [plannedConfigs, setPlannedConfigs] = useState<Record<string, string>>({});
+  const [provider, setProvider] = useState<CloudProvider>("GCP");
 
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
   const [tfLogs, setTfLogs] = useState<string[]>([]);
@@ -72,6 +74,37 @@ export default function DashboardPage() {
   const [improvedTfSummary, setImprovedTfSummary] = useState<string>("");
   const [improvedPlannedConfigs, setImprovedPlannedConfigs] = useState<Record<string, string>>({});
   const [improvedPlannedIds, setImprovedPlannedIds] = useState<string[]>([]);
+
+  // Document Generation State
+  const [docType, setDocType] = useState("Standard");
+  const [docEnvironment, setDocEnvironment] = useState("Development");
+  const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
+  const [docError, setDocError] = useState<string | null>(null);
+  const DOC_TYPES = ["Standard", "Business", "Technical", "Executive"];
+  const ENVIRONMENTS = ["Development", "Staging", "Production"];
+
+  const handleGenerateDoc = async () => {
+    if (!data) return;
+    setIsGeneratingDoc(true);
+    setDocError(null);
+    try {
+      const blob = await generateDocFromJson(data, docType, docEnvironment, provider);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ArchVision_${docType}_${docEnvironment}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      sendNotification("Document Generated", `Your ${docType} report is ready.`);
+      playSuccessSound();
+    } catch (e: any) {
+      setDocError(e.message || "Failed to generate document");
+    } finally {
+      setIsGeneratingDoc(false);
+    }
+  };
 
   useEffect(() => {
     requestNotificationPermission();
@@ -107,6 +140,7 @@ export default function DashboardPage() {
         const parsed = JSON.parse(raw);
         setData(parsed.data);
         setImageUrl(parsed.imageUrl);
+        if (parsed.provider) setProvider(parsed.provider);
 
         // Initialize Simulation State
         if (parsed.data.simulation_parameters) {
@@ -257,7 +291,7 @@ export default function DashboardPage() {
       const res = await fetch('/api/simulate/defaults', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ architectureJson: dataToUse })
+        body: JSON.stringify({ architectureJson: dataToUse, provider })
       });
       const json = await res.json();
       // Inject a `value` field initialised to the AI default so UI can track edits
@@ -346,7 +380,8 @@ export default function DashboardPage() {
           simulationState,
           simulationReport: simReportToUse,
           errorContext: errorLog,
-          files: errorLog ? filesToUse : null
+          files: errorLog ? filesToUse : null,
+          provider
         }),
       });
       if (!response.ok) throw new Error("Generation failed");
@@ -1159,27 +1194,39 @@ export default function DashboardPage() {
       {/* ── RIGHT PANEL: Info ── */}
       <div className="flex flex-col flex-1 min-w-0 h-1/2 md:h-full bg-[#020817]">
         {/* Tabs */}
-        <div className="flex border-b border-[var(--border)] bg-surface/80 px-2 pt-1 gap-0.5 shrink-0 overflow-x-auto print:hidden">
-          {(
-            [
-              { key: "overview", label: "Overview" },
-              { key: "component", label: "Component Info" },
-              { key: "simulation", label: "Simulation" },
-              { key: "terraform", label: "Provisioning" },
-              { key: "improvement", label: "✨ Improvement" },
-            ] as { key: Tab; label: string }[]
-          ).map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setActiveTab(t.key)}
-              className={`dash-tab ${activeTab === t.key ? "active" : ""}`}
-            >
-              {t.label}
-              {t.key === "component" && activeComp && (
-                <span className="ml-2 w-1.5 h-1.5 bg-emerald-400 rounded-full inline-block" />
-              )}
-            </button>
-          ))}
+        <div className="tab-container border-b border-[var(--border)] bg-surface/80 print:hidden">
+          <div 
+            ref={tabScrollRef}
+            onWheel={(e) => {
+              if (tabScrollRef.current) {
+                tabScrollRef.current.scrollLeft += e.deltaY;
+              }
+            }}
+            className="flex px-2 pt-1 gap-1 overflow-x-auto scroll-smooth"
+          >
+            {(
+              [
+                { key: "overview", label: "Overview", icon: "📊" },
+                { key: "component", label: "Component Info", icon: "🏗️" },
+                { key: "simulation", label: "Simulation", icon: "⚡" },
+                { key: "terraform", label: "Provisioning", icon: "⚙️" },
+                { key: "improvement", label: "Improvement", icon: "✨" },
+                { key: "documents", label: "Documents", icon: "📄" },
+              ] as { key: Tab; label: string; icon: string }[]
+            ).map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
+                className={`dash-tab ${activeTab === t.key ? "active" : ""}`}
+              >
+                <span className="text-base opacity-80 group-hover:opacity-100">{t.icon}</span>
+                <span>{t.label}</span>
+                {t.key === "component" && activeComp && (
+                  <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full inline-block shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+                )}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-6">
@@ -2021,6 +2068,134 @@ export default function DashboardPage() {
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── Documents Tab ── */}
+          {activeTab === "documents" && (
+            <div className="animate-fade-in space-y-6">
+              {/* Header */}
+              <div className="flex items-center gap-3 pb-4 border-b border-[var(--border)]">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center text-xl">
+                  📄
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-base">Document Generator</h3>
+                  <p className="text-slate-400 text-xs mt-0.5">Export a detailed infrastructure report as a .docx file</p>
+                </div>
+              </div>
+
+              {/* Architecture summary preview */}
+              <div className="glass rounded-xl p-4 border border-white/5 space-y-2">
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Included in report</div>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { icon: "🏗️", label: "Architecture Overview", desc: `${data.components.length} components detected` },
+                    { icon: "💰", label: "Cost Analysis", desc: data.cost_estimate || "Estimated costs" },
+                    { icon: "🛡️", label: "Security Score", desc: `${data.security_score ?? "??"} / 100` },
+                    { icon: "📊", label: "Simulation Results", desc: simulationReport ? "Run ✓ — included" : "Not run yet" },
+                    { icon: "🏗️", label: "Terraform Summary", desc: tfSummary ? "Generated ✓" : "Not provisioned yet" },
+                    { icon: "☁️", label: "Cloud Provider", desc: provider },
+                  ].map((item) => (
+                    <div key={item.label} className="flex items-start gap-2.5 p-3 rounded-lg bg-white/[0.03] border border-white/5">
+                      <span className="shrink-0 flex items-center justify-center">
+                        {item.label === "Cloud Provider" ? (
+                          <div className="w-6 h-6 rounded bg-white flex items-center justify-center p-1 shadow-sm">
+                            <img src={`/${provider.toLowerCase()}.png`} alt={provider} className="w-full h-full object-contain" />
+                          </div>
+                        ) : (
+                          <span className="text-base">{item.icon}</span>
+                        )}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-slate-200 truncate">{item.label}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 truncate">{item.desc}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Configuration */}
+              <div className="glass rounded-xl p-5 border border-white/5 space-y-5">
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Configuration</div>
+
+                {/* Document Type */}
+                <div className="space-y-2">
+                  <label className="text-xs text-slate-300 font-medium">Document Type</label>
+                  <div className="flex flex-wrap gap-2">
+                    {DOC_TYPES.map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setDocType(d)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                          docType === d
+                            ? "bg-emerald-600/20 border-emerald-500/50 text-emerald-300"
+                            : "bg-white/5 border-white/10 text-slate-400 hover:text-white hover:border-white/20"
+                        }`}
+                      >
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Environment */}
+                <div className="space-y-2">
+                  <label className="text-xs text-slate-300 font-medium">Environment</label>
+                  <div className="flex flex-wrap gap-2">
+                    {ENVIRONMENTS.map((e) => (
+                      <button
+                        key={e}
+                        type="button"
+                        onClick={() => setDocEnvironment(e)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                          docEnvironment === e
+                            ? "bg-blue-600/20 border-blue-500/50 text-blue-300"
+                            : "bg-white/5 border-white/10 text-slate-400 hover:text-white hover:border-white/20"
+                        }`}
+                      >
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Error */}
+              {docError && (
+                <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl p-3 text-xs animate-fade-in">
+                  <span className="shrink-0 mt-0.5">⚠️</span>
+                  <span>{docError}</span>
+                </div>
+              )}
+
+              {/* Generate Button */}
+              <button
+                onClick={handleGenerateDoc}
+                disabled={isGeneratingDoc}
+                className="w-full py-4 flex items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold transition-all shadow-lg shadow-emerald-500/20"
+                style={{ boxShadow: !isGeneratingDoc ? "0 0 30px rgba(16,185,129,0.2)" : undefined }}
+              >
+                {isGeneratingDoc ? (
+                  <>
+                    <Spinner />
+                    <span>Generating Document…</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Download {docType} Report (.docx)
+                  </>
+                )}
+              </button>
+
+              <p className="text-center text-slate-600 text-[10px]">
+                The document is generated fresh from your analyzed architecture data.
+              </p>
             </div>
           )}
 

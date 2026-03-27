@@ -21,6 +21,8 @@ export interface SimulationParameter {
   unit: string;
 }
 
+export type CloudProvider = 'GCP' | 'AWS' | 'Azure';
+
 export interface InteractiveResponse {
   cost_estimate: string;
   cost_details: string;
@@ -29,6 +31,7 @@ export interface InteractiveResponse {
   terraform_skeleton: string;
   simulation_parameters?: SimulationParameter[];
   components: ArchComponent[];
+  provider?: CloudProvider;
 }
 
 export interface ScalingResult {

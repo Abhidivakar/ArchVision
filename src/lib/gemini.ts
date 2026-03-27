@@ -84,11 +84,11 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, delay = 20
 }
 
 
-export const INTERACTIVE_PROMPT = `
+export const getInteractivePrompt = (provider: string) => `
 You are an expert Cloud Architect. Analyze this architecture diagram.
 Extract the architecture details into a STRICT JSON payload.
 
-Your task is to locate EVERY single GCP service icon with PIXEL-PERFECT ACCURACY.
+Your task is to locate EVERY single ${provider} service icon with PIXEL-PERFECT ACCURACY.
 
 GROUNDING RULES (MANDATORY):
 - Use your native [ymin, xmin, ymax, xmax] spatial grounding scale [0-1000].
@@ -119,7 +119,7 @@ Structure:
       "id": "...",
       "name": "...",
       "service": "...",
-      "service_type": "GCP icon type",
+      "service_type": "${provider} icon type",
       "description": "Short purpose or function of this component.",
       "cost": "Rough cost estimate for this specific item (e.g. $20)",
       "security": "Security capabilities or requirements for this item.",
@@ -139,7 +139,7 @@ CRITICAL: The 'simulation_parameters' array should contain 3 to 5 relevant metri
 BE CONCISE: Return ONLY the JSON payload. Focus on high-value details to ensure fast generation.
 `;
 
-export async function analyzeArchitecture(imageBuffer: Buffer, mimeType: string) {
+export async function analyzeArchitecture(imageBuffer: Buffer, mimeType: string, provider: 'GCP' | 'AWS' | 'Azure' = 'GCP') {
   // IMPORTANT: The system uses the model defined in DEFAULT_GEMINI_MODEL.
   // Using an invalid model name will cause 403 errors.
   const model = getVertexAI().getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
@@ -149,7 +149,7 @@ export async function analyzeArchitecture(imageBuffer: Buffer, mimeType: string)
       {
         role: "user",
         parts: [
-          { text: INTERACTIVE_PROMPT },
+          { text: getInteractivePrompt(provider) },
           {
             inlineData: {
               data: imageBuffer.toString("base64"),
@@ -167,7 +167,7 @@ export async function analyzeArchitecture(imageBuffer: Buffer, mimeType: string)
   let text = response.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
   // Clean up potential markdown formatting
-  text = text.replace(/^```json\s*/, "").replace(/```$/, "").trim();
+  text = text.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
 
   return JSON.parse(text);
 }
@@ -176,7 +176,7 @@ export async function analyzeArchitecture(imageBuffer: Buffer, mimeType: string)
  * Generates sensible infrastructure configuration defaults for each component,
  * to pre-fill the simulation configuration sheet in Manual mode.
  */
-export async function generateComponentDefaults(architectureJson: any): Promise<any[]> {
+export async function generateComponentDefaults(architectureJson: any, provider: string = "GCP"): Promise<any[]> {
   const model = getVertexAI().getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
 
   const components = architectureJson.components || [];
@@ -185,7 +185,7 @@ export async function generateComponentDefaults(architectureJson: any): Promise<
     .join("\n");
 
   const prompt = `
-You are a Google Cloud infrastructure expert.
+You are a ${provider} cloud infrastructure expert.
 Given these architecture components, generate sensible production default configuration values for each.
 For each component, provide 2-4 KEY infrastructure parameters that are most relevant to its service type.
 
@@ -222,9 +222,11 @@ export async function simulateWorkload(architectureJson: any, simulationState: a
   scenarioPreset?: string,
   failureSimulation?: string[],
   isMultiRegion?: boolean,
-  serviceConfigs?: Array<{ component_id: string; component_name: string; service: string; configs: Array<{ key: string; label: string; value?: number; default: number; unit: string }> }>
+  serviceConfigs?: Array<{ component_id: string; component_name: string; service: string; configs: Array<{ key: string; label: string; value?: number; default: number; unit: string }> }>,
+  provider?: string
 }) {
   const model = getVertexAI().getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
+  const provider = options.provider || "GCP";
 
   const archServices = architectureJson.components?.map((c: any) => c.service).filter(Boolean) || [];
   const stateStr = Object.entries(simulationState)
@@ -253,7 +255,7 @@ USER-DEFINED INFRASTRUCTURE CONFIGURATIONS (Manual Mode):
 ${configLines}
 CRITICAL: Base your entire analysis on these EXACT user-defined configurations. Evaluate whether these specific config values can handle the given workload. Call out if any config is under-provisioned.`;
   } else {
-    configSection = `INFRASTRUCTURE MODE: Auto (AI-Inferred). Assume sensible GCP production defaults for each service. You MUST include an "assumed_configs" array in your response listing what you assumed for each key service.`;
+    configSection = `INFRASTRUCTURE MODE: Auto (AI-Inferred). Assume sensible ${provider} production defaults for each service. You MUST include an "assumed_configs" array in your response listing what you assumed for each key service.`;
   }
 
   const prompt = `
@@ -323,11 +325,48 @@ Return a STRICT JSON response exactly matching this structure:
   return JSON.parse(text);
 }
 
+function getTerraformGuardrails(provider: string) {
+  if (provider === "AWS") {
+    return `
+     AWS PROVIDER GUARDRAILS (CRITICAL):
+    1. aws_instance: Use valid instance types like t3.medium or m5.large.
+    2. aws_db_instance: Use valid engine like mysql or postgres.
+    3. aws_s3_bucket: bucket names must be globally unique, force_destroy=true is recommended for testing.
+    4. aws_autoscaling_group: always specify min_size, max_size, and vpc_zone_identifier.
+    5. References (CRITICAL): Ensure all variables used in strings are actually defined in variables.tf.
+    6. Ensure you include the correct AWS provider block with region.
+    `;
+  } else if (provider === "Azure") {
+    return `
+     AZURE PROVIDER GUARDRAILS (CRITICAL):
+    1. azurerm_resource_group: Always create a resource group.
+    2. azurerm_virtual_machine: Use valid size like Standard_D2s_v3.
+    3. azurerm_storage_account: Use valid account_tier and account_replication_type.
+    4. References (CRITICAL): Ensure all variables used in strings are actually defined in variables.tf.
+    5. Ensure you include the correct Azure provider block with features {}.
+    `;
+  } else {
+    return `
+     GCP PROVIDER GUARDRAILS (CRITICAL):
+    1. google_compute_autoscaler: NEVER put 'region' directly in this resource. Use 'zone' for Zonal.
+    2. google_compute_instance_group_manager: ALWAYS include a 'auto_healing_policies { health_check = ... }' block.
+    3. google_compute_health_check: DO NOT put 'port', 'proxy_header', or 'request_path' at the top level. They MUST be inside a nested 'http_health_check { ... }' or 'tcp_health_check { ... }' block.
+    4. google_compute_autoscaler: ALWAYS include 'min_replicas' and 'max_replicas' inside the 'autoscaling_policy' block.
+    5. google_container_cluster: Use 'release_channel { channel = "REGULAR" }' block instead of 'release_channel = "REGULAR"'.
+    6. References (CRITICAL): Ensure all variables used in strings are actually defined in variables.tf.
+    7. google_compute_instance_group_manager: The 'update_policy' block MUST include 'minimal_action' (e.g., "REPLACE" or "RESTART").
+    8. google_compute_instance_group_manager: DO NOT put 'autoscaling_policy' inside this resource. It MUST be a separate 'google_compute_autoscaler'.
+    9. google_compute_backend_service: ALWAYS include 'health_checks = [google_compute_health_check.name.id]' reference.
+    10. google_compute_region_instance_group_manager: Use this for regional managed instance groups, same rules apply.
+    `;
+  }
+}
+
 export async function generateFullTerraform(
   architectureJson: any,
   simulationState: Record<string, number>,
   simulationReport?: any,
-  errorContext?: string
+  provider: string = "GCP"
 ): Promise<{ files: Record<string, string>; summary: string }> {
   const model = getVertexAI().getGenerativeModel({
     model: DEFAULT_GEMINI_MODEL,
@@ -372,34 +411,14 @@ export async function generateFullTerraform(
        - IF NO FINDINGS ARE PRESENT (Simulation not run): Use "Heuristic Sizing". Analyze the COMPONENTS and target ${simulationState["rps"] || 0} RPS (if provided) to choose sensible, production-grade machine types (e.g. e2-standard-2 for typical apps).
     2. EXTREME CONCISCENESS: Use minimal comments. Focus on sizing and connectivity.
 
-    3. VALID RESOURCES (CRITICAL):
-       - Use 'google_compute_health_check' with a nested 'http_health_check' or 'https_health_check' block for 'port'/'request_path'.
-       - Use 'google_compute_forwarding_rule' (not region_forwarding_rule unless specifically multi-region).
-       - For Redis, use tier "BASIC" or "STANDARD_HA".
-       - For SQL, use 'deletion_protection = true' directly in 'settings'.
+    3. VALID RESOURCES (CRITICAL): Use appropriate Terraform module definitions for the ${provider} provider.
     4. VARIABLE DEFINITIONS (MANDATORY): EVERY variable used in 'main.tf' MUST have a corresponding 'variable "..." {}' block in 'variables.tf'.
     5. TFVARS (MANDATORY): In 'terraform.tfvars', you MUST provide valid values for EVERY variable declared in 'variables.tf'. Scaled values must reflect traffic and findings.
     6. TRACEABILITY: Comment above each resource with the component 'name' or 'id'.
     7. CRITICAL: Do NOT wrap the code in markdown code blocks. NO backticks. NO \`\`\`.
 
-     GCP PROVIDER GUARDRAILS (CRITICAL):
-    1. google_compute_autoscaler: NEVER put 'region' directly in this resource. Use 'zone' for Zonal.
-    2. google_compute_instance_group_manager: ALWAYS include a 'auto_healing_policies { health_check = ... }' block.
-    3. google_compute_health_check: DO NOT put 'port', 'proxy_header', or 'request_path' at the top level. They MUST be inside a nested 'http_health_check { ... }' or 'tcp_health_check { ... }' block.
-    4. google_compute_autoscaler: ALWAYS include 'min_replicas' and 'max_replicas' inside the 'autoscaling_policy' block.
-    5. google_container_cluster: Use 'release_channel { channel = "REGULAR" }' block instead of 'release_channel = "REGULAR"'.
-    6. References (CRITICAL): Ensure all variables used in strings are actually defined in variables.tf.
-    7. google_compute_instance_group_manager: The 'update_policy' block MUST include 'minimal_action' (e.g., "REPLACE" or "RESTART").
-    8. google_compute_instance_group_manager: DO NOT put 'autoscaling_policy' inside this resource. It MUST be a separate 'google_compute_autoscaler'.
-    9. google_compute_backend_service: ALWAYS include 'health_checks = [google_compute_health_check.name.id]' reference.
-    10. google_compute_region_instance_group_manager: Use this for regional managed instance groups, same rules apply.
+    ${getTerraformGuardrails(provider)}
     
-    ${errorContext ? `
-    ### CRITICAL: FIX PREVIOUS ERRORS
-    The previous generation failed with these Terraform errors:
-    "${errorContext}"
-    PLEASE FIX THESE ERRORS and optimize based on findings. 
-    ` : ""}
     
     [SUMMARY]
     Explain specifically how the resource tiers chosen address the SIMULATION FINDINGS and RPS load of ${simulationState["rps"] || 0}. 
@@ -452,7 +471,8 @@ export async function fixTerraform(
   simulationState: Record<string, number>,
   originalFiles: Record<string, string>,
   errorContext: string,
-  simulationReport?: any
+  simulationReport?: any,
+  provider: string = "GCP"
 ): Promise<{ files: Record<string, string>; summary: string }> {
   const model = getVertexAI().getGenerativeModel({
     model: DEFAULT_GEMINI_MODEL,
@@ -484,8 +504,11 @@ export async function fixTerraform(
     TASK:
     Fix the specific errors reported. 
     1. Ensure the code remains optimized for the SIMULATION FINDINGS (mitigate bottlenecks found).
-    2. Follow all GCP PROVIDER GUARDRAILS (auto_healing_policies, health_check nesting, autoscaler zonal vs regional).
+    2. Follow all PROVIDER GUARDRAILS for ${provider}:
+${getTerraformGuardrails(provider)}
     3. Return the FULL set of all files.
+    4. CRITICAL AVOIDANCE: If an argument is reported as "Unsupported argument" or "not expected here", you MUST COMPLETELY REMOVE IT from the code. Do not attempt to give it a different value.
+    5. CRITICAL SIMPLIFICATION: If a resource fails repeatedly, fall back to the most basic, minimal version of that resource to ensure success. Do not make the exact same mistake from the previous attempt.
     
     [SUMMARY]
     Briefly explain what was repaired and how the final state maintains scaling compliance for ${simulationState["rps"] || 0} RPS based on findings.
@@ -599,6 +622,87 @@ export async function generateDocumentContent(imageBuffer: Buffer, mimeType: str
 
   let text = response.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
+  text = text.replace(/^```json\s*/, "").replace(/```$/, "").trim();
+  return JSON.parse(text);
+}
+
+/**
+ * Generates document content directly from an already-analyzed InteractiveResponse JSON.
+ * Used by the dashboard Documents tab to avoid re-running Vision AI on the same image.
+ */
+export async function generateDocumentFromJson(
+  architectureJson: any,
+  docType: string,
+  environment: string,
+  provider: string = "GCP"
+) {
+  const model = getVertexAI().getGenerativeModel({ model: DEFAULT_GEMINI_MODEL });
+
+  let focus = "Balanced, thorough documentation.";
+  let sections = "- Executive Summary\n- Architecture Analysis\n- Security Implementation";
+
+  if (docType === "Standard") {
+    focus = "Cost-efficiency, flexibility, and comprehensive documentation.";
+    sections = "- Executive Summary\n- Business Requirements\n- Architecture Analysis\n- Security Implementation\n- Detailed Cost Analysis\n- Performance and Scalability\n- Deployment and Operations\n- Risk Assessment\n- Implementation Roadmap";
+  } else if (docType === "Technical") {
+    focus = "Engineering depth: patterns, network topology, security controls, and bottlenecks.";
+    sections = "- Architecture Analysis\n- Security Implementation\n- Performance and Scalability\n- Deployment and Operations\n- Monitoring and Maintenance";
+  } else if (docType === "Business") {
+    focus = "Business value, cost justification, risks, and strategic roadmap.";
+    sections = "- Executive Summary\n- Business Requirements\n- Detailed Cost Analysis\n- Risk Assessment\n- Implementation Roadmap";
+  } else if (docType === "Executive") {
+    focus = "High-level summary for non-technical stakeholders.";
+    sections = "- Executive Summary\n- Business Requirements\n- Risk Assessment";
+  }
+
+  const componentsContext = (architectureJson.components || [])
+    .map((c: any) => `• ${c.name} (${c.service}) — Cost: ${c.cost || "N/A"}, Purpose: ${c.description || c.purpose || "N/A"}`)
+    .join("\n");
+
+  const prompt = `
+    You are an expert Cloud Solutions Architect specializing in ${provider} architecture documentation.
+    
+    The following architecture has already been analyzed by an AI system. Use this data to generate a detailed ${docType} document.
+    
+    DOCUMENT METADATA:
+    - Type: ${docType}
+    - Environment: ${environment}
+    - Cloud Provider: ${provider}
+    - Focus Area: ${focus}
+    
+    ARCHITECTURE DATA:
+    - Security Score: ${architectureJson.security_score ?? "N/A"} / 100
+    - Cost Estimate: ${architectureJson.cost_estimate || "N/A"}
+    - Summary: ${architectureJson.security_summary || ""}
+    
+    DETECTED COMPONENTS (${(architectureJson.components || []).length} total):
+    ${componentsContext}
+    
+    REQUIRED SECTIONS:
+    ${sections}
+    
+    Format: Use typed blocks: "paragraph", "subheading", "bullet_list" (items[]), "numbered_list" (items[]), "table" (headers[], rows[][]), "note".
+    Return a STRICT JSON response:
+    {
+      "title": "A professional name for this architecture",
+      "sections": [
+        {
+          "heading": "Section Name",
+          "content": [
+            { "type": "paragraph", "text": "Content here..." },
+            { "type": "bullet_list", "items": ["Item 1", "Item 2"] }
+          ]
+        }
+      ]
+    }
+  `;
+
+  const result = await retryWithBackoff(() =>
+    model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] })
+  );
+  const response = await result.response;
+
+  let text = response.candidates?.[0]?.content?.parts?.[0]?.text || "";
   text = text.replace(/^```json\s*/, "").replace(/```$/, "").trim();
   return JSON.parse(text);
 }

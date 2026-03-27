@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { generateFullTerraform, fixTerraform, extractTfConfigs, generateFinalPlanSummary } from "@/lib/gemini";
-import { runTerraformSandbox, cleanupSandbox } from "@/lib/terraform";
+import { runTerraformSandbox, cleanupSandbox, deterministicTerraformFix } from "@/lib/terraform";
 
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   try {
-    const { architectureJson, simulationState, simulationReport, errorContext, files } = await request.json();
-
-
+    const { architectureJson, simulationState, simulationReport, errorContext, files, provider } = await request.json();
 
     if (!architectureJson) {
       return NextResponse.json({ detail: "No architecture data provided" }, { status: 400 });
@@ -25,20 +23,23 @@ export async function POST(request: NextRequest) {
       console.log("[TF-Route] Repair mode triggered from UI context.");
       // If we are repairing, we start the loop with the provided files
       // BUT we need an initial summary, so let's call fixTerraform once to get started
-      const repairResult = await fixTerraform(architectureJson, simulationState, files, errorContext, simulationReport);
+      const repairResult = await fixTerraform(architectureJson, simulationState, files, errorContext, simulationReport, provider);
       finalFiles = repairResult.files;
       finalSummary = repairResult.summary;
     } else {
       console.log("[TF-Route] Initial generation triggered.");
-      const result = await generateFullTerraform(architectureJson, simulationState || {}, simulationReport);
+      const result = await generateFullTerraform(architectureJson, simulationState || {}, simulationReport, provider);
       finalFiles = result.files;
       finalSummary = result.summary;
     }
 
 
-    // Phase 2: Internal Verification Loop (Up to 2 retries)
+    // Phase 2: Hybrid Verification Loop (Up to 4 total iterations, max 2 LLM calls)
     let attempts = 0;
-    while (attempts < 2) {
+    let llmAttempts = 0;
+    const MAX_ITERATIONS = 4;
+    const MAX_LLM_CALLS = 2;
+    while (attempts < MAX_ITERATIONS) {
       console.log(`[TF-Verify] Attempt ${attempts + 1} starting...`);
 
       const verifyResult = await runTerraformSandbox(finalFiles, "plan");
@@ -47,28 +48,37 @@ export async function POST(request: NextRequest) {
         await cleanupSandbox(verifyResult.sandboxPath);
       }
 
-
       if (verifyResult.success) {
         console.log(`[TF-Verify] Success on attempt ${attempts + 1}`);
-        // If successful, update finalFiles and finalSummary from the successful result
-        // (though in this path, result.files and result.summary would already be the successful ones)
-        break; // Exit loop on success
+        break;
       }
 
       console.warn(`[TF-Verify] Failure on attempt ${attempts + 1}. Error: ${verifyResult.stderr || verifyResult.error}`);
-
-      // If failed, try to fix
       attempts++;
-      if (attempts < 2) {
-        const errorMsg = verifyResult.stderr || verifyResult.error || "Unknown plan error";
-        const repairResult = await fixTerraform(architectureJson, simulationState, finalFiles, errorMsg, simulationReport);
-        finalFiles = repairResult.files; // Update files for next attempt
+
+      // Step 1: DETERMINISTIC FIX - uses exact line numbers from Terraform. No LLM cost.
+      const errorMsg = verifyResult.stderr || verifyResult.error || "Unknown plan error";
+      const { files: deterFiles, fixesApplied } = deterministicTerraformFix(finalFiles, errorMsg);
+      if (fixesApplied.length > 0) {
+        console.log(`[DeterministicFix] Applied ${fixesApplied.length} fix(es): ${fixesApplied.join(" | ")}`);
+        finalFiles = deterFiles;
+        // Immediately continue to re-verify the patched files without an LLM call
+        continue;
+      }
+
+      // Step 2: LLM FIX - for complex/semantic errors the deterministic layer can't handle
+      if (llmAttempts < MAX_LLM_CALLS) {
+        llmAttempts++;
+        console.log(`[TF-Verify] No deterministic fix available. Calling LLM (attempt ${llmAttempts}/${MAX_LLM_CALLS})...`);
+        const repairResult = await fixTerraform(architectureJson, simulationState, finalFiles, errorMsg, simulationReport, provider);
+        finalFiles = repairResult.files;
         finalSummary = repairResult.summary;
       } else {
-        // Final attempt failed, capture warnings and last error
-        finalWarnings.push("Internal verification failed. Please check the code for potential syntax or resource errors.");
-        finalLastError = verifyResult.stderr || verifyResult.error;
-        break; // Exit loop after final failed attempt
+        // Exhausted all LLM calls
+        console.warn(`[TF-Verify] Exhausted all LLM repair attempts. Returning best-effort code.`);
+        finalWarnings.push("Internal verification failed after maximum repair attempts. Please review the code manually.");
+        finalLastError = errorMsg;
+        break;
       }
     }
 
