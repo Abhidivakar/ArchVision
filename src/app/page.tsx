@@ -6,6 +6,7 @@ import { generateInteractive } from "@/lib/api";
 import { playSuccessSound } from "@/lib/audio";
 import { requestNotificationPermission, sendNotification } from "@/lib/notifications";
 import type { CloudProvider } from "@/lib/types";
+import Link from "next/link";
 
 const CLOUD_PROVIDERS: CloudProvider[] = ["GCP", "AWS", "Azure"];
 
@@ -317,6 +318,27 @@ export default function HomePage() {
                   </>
                 )}
               </button>
+            </div>
+
+            {/* Action 2: Diagram Builder */}
+            <div className="p-4 border border-emerald-500/20 bg-emerald-500/5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-slide-up" style={{ animationDelay: '100ms' }}>
+              <div>
+                <h3 className="text-white font-semibold flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  Diagram Builder
+                </h3>
+                <p className="text-slate-400 text-sm mt-1">Design with a professional draw.io editor, generate diagrams with AI, then analyze.</p>
+              </div>
+
+              <Link
+                href="/builder"
+                className="w-full sm:w-auto relative overflow-hidden bg-white/5 hover:bg-white/10 border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 font-semibold py-3 px-6 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg group shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                <span>Open Builder</span>
+              </Link>
             </div>
 
           </div>
