@@ -16,7 +16,7 @@ function getVertexAI(): VertexAI {
         const parsed = JSON.parse(process.env.GCP_SERVICE_ACCOUNT_KEY);
         credentials = {
           client_email: parsed.client_email,
-          private_key: parsed.private_key.replace(/\\n/g, '\n'), // Fix Netlify escaping literal newlines
+          private_key: parsed.private_key.replace(/\\n/g, '\n'), // Ensure newlines are correctly formatted
         };
         console.log("[Auth] Successfully parsed GCP_SERVICE_ACCOUNT_KEY from environment.");
       } catch (error: any) {
@@ -24,10 +24,21 @@ function getVertexAI(): VertexAI {
         throw new Error(`Invalid GCP_SERVICE_ACCOUNT_KEY JSON format: ${error.message}`);
       }
     } else {
-       console.log("[Auth] No GCP_SERVICE_ACCOUNT_KEY found. Relying on Application Default Credentials (ADC). This will fail in Netlify if ADC isn't configured.");
+       console.log("[Auth] No GCP_SERVICE_ACCOUNT_KEY found. Relying on Application Default Credentials (ADC).");
     }
 
-    const vertexSettings: any = {
+    interface VertexSettings {
+      project: string;
+      location: string;
+      googleAuthOptions?: {
+        credentials: {
+          client_email: string;
+          private_key: string;
+        };
+      };
+    }
+
+    const vertexSettings: VertexSettings = {
       project: process.env.GCP_PROJECT_ID || "build-time-fallback-project",
       location: process.env.GCP_LOCATION || "us-central1",
     };
@@ -88,7 +99,12 @@ export const getInteractivePrompt = (provider: string) => `
 You are an expert Cloud Architect. Analyze this architecture diagram.
 Extract the architecture details into a STRICT JSON payload.
 
-Your task is to locate EVERY single ${provider} service icon with PIXEL-PERFECT ACCURACY.
+Your task is to comprehensively outline the architecture, locating EVERY single architectural component with PIXEL-PERFECT ACCURACY.
+This includes:
+- Specific ${provider} service icons
+- Generic clients (mobile devices, iPhones, Androids, laptops, web browsers)
+- Generic infrastructure (databases, generic servers, internet gateways)
+- Large boundary boxes (like VPCs, Subnets, or large outer grouping boxes like 'Google Cloud Platform')
 
 GROUNDING RULES (MANDATORY):
 - Use your native [ymin, xmin, ymax, xmax] spatial grounding scale [0-1000].
@@ -119,11 +135,13 @@ Structure:
       "id": "...",
       "name": "...",
       "service": "...",
-      "service_type": "${provider} icon type",
+      "service_type": "The specific service (e.g. 'Cloud Run', 'App Engine') or generic type (e.g. 'Mobile Client', 'Web Browser', 'Boundary Box', 'Database'). Be precise (e.g., 'iOS', 'Android', 'Web').",
+      "is_boundary": false, // Set to true ONLY if this component is a large container/boundary box surrounding other icons.
+      "parent_id": null, // If this icon is physically located INSIDE a boundary box, provide the bounding box's ID here. Otherwise null.
       "description": "Short purpose or function of this component.",
       "cost": "Rough cost estimate for this specific item (e.g. $20)",
       "security": "Security capabilities or requirements for this item.",
-      "box_2d": [ymin, xmin, ymax, xmax],
+      "box_2d": [100, 100, 200, 200], // [ymin, xmin, ymax, xmax]
       "dependencies": ["id1", "id2"], // IDs or Names of components this icon connects to via arrows/lines
       "zone": "Public | Private | Restricted" // Determine based on containment boxes (e.g. VPC, Subnet) or connectivity
     }
@@ -164,10 +182,7 @@ export async function analyzeArchitecture(imageBuffer: Buffer, mimeType: string,
   const result = await retryWithBackoff(() => model.generateContent(request));
   const response = await result.response;
 
-  let text = response.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-  // Clean up potential markdown formatting
-  text = text.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+  const text = (response.candidates?.[0]?.content?.parts?.[0]?.text || "").replace(/^```json\s*/i, "").replace(/```$/, "").trim();
 
   return JSON.parse(text);
 }
@@ -329,21 +344,23 @@ function getTerraformGuardrails(provider: string) {
   if (provider === "AWS") {
     return `
      AWS PROVIDER GUARDRAILS (CRITICAL):
-    1. aws_instance: Use valid instance types like t3.medium or m5.large.
-    2. aws_db_instance: Use valid engine like mysql or postgres.
-    3. aws_s3_bucket: bucket names must be globally unique, force_destroy=true is recommended for testing.
-    4. aws_autoscaling_group: always specify min_size, max_size, and vpc_zone_identifier.
-    5. References (CRITICAL): Ensure all variables used in strings are actually defined in variables.tf.
-    6. Ensure you include the correct AWS provider block with region.
+    1. aws_instance: Use valid instance types (t3.medium, m5.large) and always use a \`data "aws_ami"\` block to fetch the ami instead of hardcoding it. ALWAYS provide \`subnet_id\`.
+    2. aws_db_instance: Must include \`engine_version\`, \`instance_class\` (e.g. db.t3.medium), \`username\`, and \`password\`. Use valid engines like mysql or postgres.
+    3. aws_s3_bucket: Do not include \`acl\` directly; if needed, use \`aws_s3_bucket_acl\`. bucket names must be globally unique, force_destroy=true is recommended.
+    4. aws_autoscaling_group: ALWAYS specify \`min_size\`, \`max_size\`, and \`vpc_zone_identifier\` (needs a list of subnet IDs).
+    5. aws_security_group: ALWAYS include \`vpc_id\`. Ensure bidirectional rules map cleanly.
+    6. Ensure you include the correct AWS provider block with a region variable.
+    7. ALL VARIABLES used in any file MUST be declared in \`variables.tf\` and assigned a sensible default or value in \`terraform.tfvars\`.
     `;
   } else if (provider === "Azure") {
     return `
      AZURE PROVIDER GUARDRAILS (CRITICAL):
-    1. azurerm_resource_group: Always create a resource group.
-    2. azurerm_virtual_machine: Use valid size like Standard_D2s_v3.
-    3. azurerm_storage_account: Use valid account_tier and account_replication_type.
-    4. References (CRITICAL): Ensure all variables used in strings are actually defined in variables.tf.
-    5. Ensure you include the correct Azure provider block with features {}.
+    1. azurerm_resource_group: Always create a resource group. Every other resource MUST reference \`resource_group_name = azurerm_resource_group.name_here.name\` and \`location = azurerm_resource_group.name_here.location\`.
+    2. Virtual Machines: Prefer \`azurerm_linux_virtual_machine\` or \`azurerm_windows_virtual_machine\` over the deprecated \`azurerm_virtual_machine\`. Use \`size = "Standard_D2s_v3"\` or similar. ALWAYS include \`network_interface_ids\`, \`os_disk\`, and \`admin_username\`.
+    3. azurerm_storage_account: Use valid \`account_tier\` (e.g., "Standard") and \`account_replication_type\` (e.g., "LRS"). Account names must be unique, lowercase, no dashes, 3-24 chars.
+    4. azurerm_subnet: Use \`address_prefixes\` (list of strings) instead of the deprecated \`address_prefix\`. Must reference \`virtual_network_name\`.
+    5. Ensure you include the correct Azure provider block with \`features {}\`.
+    6. ALL VARIABLES used in any file MUST be declared in \`variables.tf\` and assigned a sensible default or value in \`terraform.tfvars\`.
     `;
   } else {
     return `

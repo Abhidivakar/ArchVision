@@ -9,8 +9,9 @@ export const dynamic = "force-dynamic";
  */
 async function handler(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  props: { params: Promise<{ path: string[] }> }
 ) {
+  const params = await props.params;
   const path = params.path.join("/");
   const backendBase = process.env.BACKEND_URL || "http://localhost:8000";
   const backendUrl = `${backendBase}/api/${path}`;

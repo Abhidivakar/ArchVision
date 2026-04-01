@@ -11,6 +11,8 @@ import TerraformEditor from "@/components/TerraformEditor";
 
 type Tab = "overview" | "component" | "simulation" | "terraform" | "improvement" | "documents";
 
+const CLOUD_PROVIDERS: CloudProvider[] = ["GCP", "AWS", "Azure"];
+
 export default function DashboardPage() {
   const router = useRouter();
   const imageRef = useRef<HTMLImageElement>(null);
@@ -82,6 +84,57 @@ export default function DashboardPage() {
   const [docError, setDocError] = useState<string | null>(null);
   const DOC_TYPES = ["Standard", "Business", "Technical", "Executive"];
   const ENVIRONMENTS = ["Development", "Staging", "Production"];
+
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationTarget, setMigrationTarget] = useState<CloudProvider | null>(null);
+
+  const handleMigrate = (targetProvider: CloudProvider) => {
+    if (!data || provider === targetProvider) return;
+    setMigrationTarget(targetProvider);
+  };
+
+  const confirmAndMigrate = async () => {
+    if (!migrationTarget || !data) return;
+    const targetProvider = migrationTarget;
+    setMigrationTarget(null);
+
+    setIsMigrating(true);
+    try {
+      const res = await fetch('/api/diagram/convert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ architectureJson: data, targetProvider }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Migration failed (${res.status})`);
+      }
+      const { xml } = await res.json();
+      if (xml) {
+        sessionStorage.setItem('archvision_diagram_xml', xml);
+
+        // Update the current working session data
+        const rawData = sessionStorage.getItem("archData");
+        if (rawData) {
+          try {
+            const parsed = JSON.parse(rawData);
+            parsed.provider = targetProvider;
+            sessionStorage.setItem("archData", JSON.stringify(parsed));
+          } catch (e) {
+            console.error("Failed to update archData provider", e);
+          }
+        }
+
+        sendNotification("Migration Complete", `Your diagram has been geometrically reconstructed and translated to ${targetProvider}.`);
+        playSuccessSound();
+        router.push("/builder");
+      }
+    } catch (e: any) {
+      alert(e.message || "Failed to migrate architecture diagram");
+    } finally {
+      setIsMigrating(false);
+    }
+  };
 
   const handleGenerateDoc = async () => {
     if (!data) return;
@@ -1053,6 +1106,23 @@ export default function DashboardPage() {
     );
   }
 
+  if (isMigrating) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-slate-950">
+        <div className="text-center space-y-4">
+          <div className="w-16 h-16 relative mx-auto">
+            <div className="absolute inset-0 border-4 border-blue-500/20 rounded-full" />
+            <div className="absolute inset-0 border-4 border-blue-500 rounded-full border-t-transparent animate-spin" />
+          </div>
+          <h2 className="text-xl font-bold text-white">Rebuilding Architecture Canvas...</h2>
+          <p className="text-slate-400 text-sm max-w-sm">
+            Gemini is intelligently mapping your services and logically placing the new provider's components to construct a fresh, editable architecture diagram.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // Calculate max cost for bar chart scaling
   const maxCost = simulationReport?.cost_breakdown
     ? Math.max(...simulationReport.cost_breakdown.map((c) => c.monthly_cost), 1)
@@ -1233,6 +1303,24 @@ export default function DashboardPage() {
           {/* ── Overview Tab ── */}
           {activeTab === "overview" && (
             <div className="space-y-6 animate-fade-in">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-white">Dashboard Overview</h2>
+                <div className="flex items-center gap-3 glass px-3 py-1.5 rounded-lg border border-[var(--border)]">
+                  <span className="text-sm text-slate-400 font-medium">Migrate natively to:</span>
+                  <div className="flex gap-1.5">
+                    {CLOUD_PROVIDERS.filter((p) => p !== provider).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => handleMigrate(p)}
+                        className="text-xs px-2.5 py-1 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 hover:border-blue-500/40 transition-all font-semibold"
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="glass rounded-xl p-4">
                   <div className="text-xs text-slate-500 uppercase tracking-widest mb-2">
@@ -2535,6 +2623,52 @@ export default function DashboardPage() {
               </div>
             </div>
             
+          </div>
+        </div>
+      )}
+
+      {/* Migration Confirmation Modal */}
+      {migrationTarget && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/80 backdrop-blur-md animate-fade-in" onClick={() => setMigrationTarget(null)}>
+          <div 
+            className="w-full max-w-md mx-4 glass border border-slate-700/50 rounded-2xl p-6 shadow-2xl relative overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Icon Background */}
+            <div className="absolute -top-10 -right-10 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="flex items-start gap-4 mb-2">
+              <div className="p-3 bg-gradient-to-br from-indigo-500/20 to-blue-500/20 rounded-xl border border-indigo-500/30">
+                <svg className="w-6 h-6 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                </svg>
+              </div>
+              <div className="pt-1">
+                <h3 className="text-xl font-bold text-white mb-1">Convert to {migrationTarget}?</h3>
+                <p className="text-sm text-slate-400">
+                  Are you sure you want to magically convert your existing architecture diagram to {migrationTarget}? This will geometrically translate your current layout using the selected cloud provider's official icon set.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 mt-8">
+              <button 
+                onClick={() => setMigrationTarget(null)}
+                className="flex-1 py-2.5 rounded-xl font-semibold text-slate-300 bg-slate-800/50 hover:bg-slate-700/80 border border-slate-700/50 transition-all text-sm"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmAndMigrate}
+                className="flex-1 py-2.5 rounded-xl font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-[0_0_20px_rgba(79,70,229,0.3)] transition-all text-sm flex items-center justify-center gap-2"
+              >
+                Start Conversion
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       )}

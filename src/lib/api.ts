@@ -127,3 +127,28 @@ export async function runSimulation(
 
   return res.json();
 }
+
+export async function convertDiagram(
+  targetProvider: CloudProvider,
+  sourceXml?: string,
+  architectureJson?: any
+): Promise<{ xml: string }> {
+  const res = await fetch(`${API_BASE}/diagram/convert`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ targetProvider, sourceXml, architectureJson }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = `Error ${res.status}`;
+    try {
+      msg = JSON.parse(text).error || msg;
+    } catch {
+      msg = text || msg;
+    }
+    throw new Error(msg);
+  }
+
+  return res.json();
+}
