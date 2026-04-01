@@ -103,8 +103,11 @@ export default function DashboardPage() {
   const sanitizeUrl = (url: string | null | undefined): string => {
     if (!url) return "";
     const trimmed = url.trim();
-    if (trimmed.toLowerCase().startsWith('javascript:')) return "";
-    if (trimmed.startsWith('blob:') || trimmed.startsWith('data:image/') || trimmed.startsWith('http') || trimmed.startsWith('/')) {
+    const lower = trimmed.toLowerCase();
+    if (lower.startsWith("javascript:") || lower.startsWith("data:") || lower.startsWith("vbscript:")) {
+      return "";
+    }
+    if (trimmed.startsWith("blob:") || trimmed.startsWith("data:image/") || trimmed.startsWith("http") || trimmed.startsWith("/")) {
       return trimmed;
     }
     return "";
