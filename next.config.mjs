@@ -13,7 +13,10 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  devIndicators: false, // Disables all Next.js 15 dev indicators (N icon, route info, build activity)
+  devIndicators: {
+    appIsrStatus: false,
+    buildActivity: false,
+  },
 };
 
 export default nextConfig;
