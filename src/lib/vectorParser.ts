@@ -38,7 +38,7 @@ function parseSVG(svgContent: string): VectorNode[] {
   if (!svg) return [];
 
   // Get viewbox or width/height for coordinate normalization
-  let viewBox = svg.getAttribute("viewBox")?.split(/\s+|,/) || [];
+  const viewBox = svg.getAttribute("viewBox")?.split(/\s+|,/) || [];
   let width = parseFloat(svg.getAttribute("width") || "1000");
   let height = parseFloat(svg.getAttribute("height") || "1000");
 
