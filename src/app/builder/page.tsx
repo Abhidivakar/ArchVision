@@ -154,9 +154,7 @@ export default function BuilderPage() {
         editorRef.current.loadXml(xml);
         setCurrentXml(xml);
         sessionStorage.setItem("archData", JSON.stringify({ 
-          data: archData, 
-          imageUrl: URL.createObjectURL(conversionFile),
-          filename: conversionFile.name,
+          data: archData,
           provider: targetProvider 
         }));
         sessionStorage.setItem('archvision_diagram_xml', xml);

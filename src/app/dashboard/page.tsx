@@ -104,12 +104,40 @@ export default function DashboardPage() {
     if (!url) return "";
     const trimmed = url.trim();
     const lower = trimmed.toLowerCase();
-    if (lower.startsWith("javascript:") || lower.startsWith("data:") || lower.startsWith("vbscript:")) {
+
+    // Disallow known dangerous schemes and malformed values
+    if (
+      lower.startsWith("javascript:") ||
+      lower.startsWith("vbscript:") ||
+      (lower.startsWith("data:") && !lower.startsWith("data:image/"))
+    ) {
       return "";
     }
-    if (trimmed.startsWith("blob:") || trimmed.startsWith("data:image/") || trimmed.startsWith("http") || trimmed.startsWith("/")) {
+
+    // Allow blob URLs created via URL.createObjectURL
+    if (trimmed.startsWith("blob:")) {
       return trimmed;
     }
+
+    // Allow image data URLs only
+    if (trimmed.startsWith("data:image/")) {
+      return trimmed;
+    }
+
+    // Allow https image URLs
+    if (trimmed.startsWith("https://")) {
+      return trimmed;
+    }
+
+    // Allow same-origin relative paths that look like normal resources
+    if (trimmed.startsWith("/")) {
+      // Basic defense-in-depth: reject obviously suspicious characters
+      if (trimmed.includes("<") || trimmed.includes(">")) {
+        return "";
+      }
+      return trimmed;
+    }
+
     return "";
   };
 
@@ -217,7 +245,6 @@ export default function DashboardPage() {
       try {
         const parsed = JSON.parse(raw);
         setData(parsed.data);
-        setImageUrl(parsed.imageUrl);
         if (parsed.provider) setProvider(parsed.provider);
 
         // Initialize Simulation State
