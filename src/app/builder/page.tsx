@@ -42,6 +42,15 @@ export default function BuilderPage() {
     setEditorReady(true);
   }, []);
 
+  // Sync local theme state with global Tailwind HTML class so global CSS tokens respond correctly
+  useEffect(() => {
+    if (editorTheme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [editorTheme]);
+
   // Auto-save XML to sessionStorage
   useEffect(() => {
     if (!currentXml) return;
