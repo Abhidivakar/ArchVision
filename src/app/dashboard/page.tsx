@@ -1188,7 +1188,7 @@ export default function DashboardPage() {
   return (
     <div
       ref={panelContainerRef}
-      className="fixed inset-0 z-50 flex flex-col md:flex-row bg-[#020817] text-slate-200 overflow-hidden print:relative print:overflow-auto"
+      className="fixed inset-0 z-50 flex flex-col md:flex-row bg-background text-foreground bg-grid overflow-hidden print:relative print:overflow-auto"
       onMouseMove={(e) => {
         if (!isDraggingPanel || !panelContainerRef.current) return;
         const rect = panelContainerRef.current.getBoundingClientRect();
@@ -1205,7 +1205,7 @@ export default function DashboardPage() {
         style={{ width: `${panelWidthPct}%` }}
       >
         {/* Topbar */}
-        <div className="flex items-center justify-between px-5 py-3 bg-surface/80 backdrop-blur border-b border-[var(--border)] shrink-0 print:hidden">
+        <div className="flex items-center justify-between px-5 py-3 bg-surface/80 backdrop-blur-md border-b border-border shrink-0 print:hidden z-20">
           <div className="flex items-center gap-3">
             <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
             <span className="font-semibold text-sm tracking-wide">
@@ -1224,9 +1224,9 @@ export default function DashboardPage() {
         </div>
 
         {/* Diagram Container */}
-        <div className="flex-1 overflow-auto flex items-center justify-center p-4 relative bg-[#02050c]">
-          {/* Pixel-Flush Wrapper: Element box matches Image pixels exactly */}
-          <div className="relative rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.5)] overflow-hidden bg-[#0a0f1d] border border-white/5 inline-block">
+        <div className="flex-1 overflow-auto flex items-center justify-center p-4 relative bg-background/50">
+          {/* Pixel-Flush Wrapper */}
+          <div className="relative rounded-xl border border-border shadow-sm overflow-hidden bg-surface inline-block">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <div className="relative group">
               {/* Scenario Toggler */}
@@ -1314,9 +1314,9 @@ export default function DashboardPage() {
       </div>
 
       {/* ── RIGHT PANEL: Info ── */}
-      <div className="flex flex-col flex-1 min-w-0 h-1/2 md:h-full bg-[#020817]">
+      <div className="flex flex-col flex-1 min-w-0 h-1/2 md:h-full bg-surface border-l border-border relative z-10">
         {/* Tabs */}
-        <div className="tab-container border-b border-[var(--border)] bg-surface/80 print:hidden">
+        <div className="tab-container border-b border-border bg-surface/80 backdrop-blur-md print:hidden">
           <div 
             ref={tabScrollRef}
             onWheel={(e) => {

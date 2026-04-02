@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { AudioUnlock } from "@/components/AudioUnlock";
 
-
 export const metadata: Metadata = {
   title: "ArchVision — AI Architecture Analyzer",
   description:
@@ -16,15 +15,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className="antialiased min-h-screen">
-        {/* Ambient background orbs */}
-        <div className="orb orb-blue" />
-        <div className="orb orb-purple" />
-        <div className="orb orb-teal" />
+      <body className="bg-background text-foreground min-h-screen">
         <AudioUnlock />
         <div className="relative z-10">{children}</div>
       </body>
-
     </html>
   );
 }

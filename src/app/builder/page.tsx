@@ -274,9 +274,9 @@ export default function BuilderPage() {
   const isDark = editorTheme === 'dark';
 
   return (
-    <div className={`h-screen w-full flex flex-col overflow-hidden ${isDark ? 'bg-slate-950' : 'bg-slate-100'}`}>
+    <div className="h-screen w-full flex flex-col overflow-hidden bg-background text-foreground bg-grid">
       {/* Top Toolbar */}
-      <header className={`h-14 border-b flex items-center px-4 shrink-0 z-20 backdrop-blur-md ${isDark ? 'border-white/5 bg-slate-900/60' : 'border-slate-200 bg-white/80'}`}>
+      <header className="h-14 border-b border-border bg-surface/80 backdrop-blur-md flex items-center px-4 shrink-0 z-20">
         {/* Left Section */}
         <div className="flex-1 flex items-center gap-3 min-w-0">
           <Link href="/" className="text-slate-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/5 shrink-0">

@@ -18,10 +18,27 @@ export default function HomePage() {
   const [provider, setProvider] = useState<CloudProvider>("GCP");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
 
   useEffect(() => {
     requestNotificationPermission();
+    // Check initial theme
+    if (document.documentElement.classList.contains("dark")) {
+      setTheme("dark");
+    } else {
+      setTheme("light");
+    }
   }, []);
+
+  const toggleTheme = () => {
+    const newTheme = theme === "dark" ? "light" : "dark";
+    if (newTheme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+    setTheme(newTheme);
+  };
 
   const handleFile = useCallback((f: File) => {
     setFile(f);
@@ -53,24 +70,17 @@ export default function HomePage() {
       if (isVector) {
         const { parseVectorFile } = await import("@/lib/vectorParser");
         vectorNodes = await parseVectorFile(file);
-        console.log("Extracted Vector Nodes:", vectorNodes);
       }
 
-      // Still call Gemini for the "Intelligence" layer
-      // For SVG, we can send it as-is or rasterize. generateInteractive handles the file.
       const data = await generateInteractive(file, provider);
-      // Convert file to Data URL for persistence across refreshes
       const reader = new FileReader();
       const imageUrl = await new Promise<string>((resolve) => {
         reader.onload = () => resolve(reader.result as string);
         reader.readAsDataURL(file);
       });
 
-      // HYBRID MERGE: If we have vector nodes, try to match them with Gemini's components
-      // to provide 100% precise coordinates.
       if (isVector && vectorNodes.length > 0) {
         data.components = data.components.map(comp => {
-          // Try to find a matching node by name or service type
           const match = vectorNodes.find(vn =>
             vn.name.toLowerCase().includes(comp.name.toLowerCase()) ||
             comp.name.toLowerCase().includes(vn.name.toLowerCase()) ||
@@ -81,7 +91,7 @@ export default function HomePage() {
             return {
               ...comp,
               box_2d: match.box_2d,
-              id: match.id || comp.id // Use vector ID if available
+              id: match.id || comp.id
             };
           }
           return comp;
@@ -109,270 +119,226 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-16 relative overflow-hidden">
-      {/* Ambient Deep Glows */}
-      <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-blue-600/20 blur-[150px] rounded-full mix-blend-screen pointer-events-none" />
-      <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-emerald-600/20 blur-[150px] rounded-full mix-blend-screen pointer-events-none" />
-
-      {/* Main Split Grid */}
-      <div className="w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 lg:gap-24 items-center z-10">
-
-        {/* Left: The Pitch */}
-        <div className="flex flex-col items-start text-left animate-slide-right lg:mt-[-4rem]">
-          <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded-full px-4 py-1.5 text-blue-400 text-xs font-semibold uppercase tracking-widest mb-6">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-            Powered by Gemini 2.5 Pro
+    <div className="min-h-screen bg-grid flex flex-col relative w-full overflow-hidden">
+      {/* Minimal Header */}
+      <header className="w-full h-16 border-b border-border bg-surface/80 backdrop-blur-md flex items-center justify-between px-6 z-20">
+        <div className="flex items-center gap-3">
+          <div className="w-6 h-6 border-[1.5px] border-primary flex items-center justify-center relative">
+            <div className="w-2 h-2 bg-primary"></div>
+            {/* Tech accents */}
+            <div className="absolute -top-1 -left-1 w-2 h-2 border-t border-l border-foreground opacity-50"></div>
+            <div className="absolute -bottom-1 -right-1 w-2 h-2 border-b border-r border-foreground opacity-50"></div>
           </div>
-          <h1 className="text-6xl md:text-[5.5rem] font-bold tracking-tight mb-6 bg-gradient-to-br from-white via-blue-100 to-blue-400 bg-clip-text text-transparent leading-[1.1]">
-            ArchVision
+          <span className="font-mono font-medium text-lg tracking-tight">ArchVision</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <button onClick={toggleTheme} className="p-2 text-slate-500 hover:text-foreground transition-colors rounded-md border border-transparent hover:border-border">
+            {theme === "dark" ? (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+            ) : (
+               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+             )}
+          </button>
+          <Link href="/builder" className="btn-secondary py-1.5 px-4 text-sm code-block">
+            /dev/builder
+          </Link>
+        </div>
+      </header>
+
+      {/* Main Content Area - True Landscape First */}
+      <main className="flex-1 flex flex-col lg:flex-row w-full items-stretch relative">
+        {/* Left Side: Copy & Actions */}
+        <div className="w-full lg:w-[45%] xl:w-[40%] flex flex-col justify-center px-8 lg:px-16 xl:px-24 py-12 lg:py-0 border-b lg:border-b-0 lg:border-r border-border bg-background/50 z-10 animate-fade-in">
+          <div className="inline-flex items-center gap-2 border border-primary/30 text-primary bg-primary/5 rounded-full px-3 py-1 text-xs font-mono font-medium uppercase tracking-wider mb-6 w-fit">
+            <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+            AI Infrastructure Engine
+          </div>
+          <h1 className="text-4xl md:text-5xl xl:text-6xl font-semibold tracking-tight mb-4 leading-[1.1]">
+            Deploy with <br/> Absolute Precision.
           </h1>
-          <p className="text-slate-400 text-xl max-w-xl leading-relaxed mb-8">
-            Upload your SaaS diagram and instantly unlock AI-driven cost analysis, security scoring, interactive hotspots, and production-ready Terraform provisioning.
+          <p className="text-slate-500 dark:text-slate-400 text-lg md:text-xl font-light mb-8 max-w-lg">
+            Upload architecture diagrams. Instantly generate cost models, security overlays, and production-ready Terraform.
           </p>
-
-          {/* Feature Pills */}
-          <div className="flex flex-wrap gap-3 animate-fade-in delay-200">
-            {[
-              "💰 Cost Analysis",
-              "🛡️ Security Scoring",
-              "🗺️ Interactive Hotspots",
-              "🏗️ Terraform Skeletons",
-              "📄 Word Documentation",
-            ].map((f) => (
-              <span
-                key={f}
-                className="text-sm font-medium text-slate-300 bg-white/5 border border-white/10 rounded-full px-4 py-2 hover:bg-white/10 transition-colors cursor-default"
-              >
-                {f}
-              </span>
-            ))}
+          
+          {/* Tech Spec List */}
+          <div className="flex flex-col gap-2 font-mono text-sm text-slate-500 dark:text-slate-400 mb-6 border-l border-border pl-4">
+            <div className="flex items-center gap-2"><span className="text-primary">&gt;</span> Cost Analysis Engine v2</div>
+            <div className="flex items-center gap-2"><span className="text-primary">&gt;</span> Security Posture Scoring</div>
+            <div className="flex items-center gap-2"><span className="text-primary">&gt;</span> Diagram to Terraform Compiler</div>
           </div>
+
+
         </div>
 
-        {/* Right: The Engine (Main Card) */}
-        <div className="w-full glass rounded-3xl p-6 md:p-8 shadow-2xl border border-white/10 bg-slate-900/40 backdrop-blur-2xl animate-slide-left relative overflow-hidden group">
-          {/* Subtle card inner glow */}
-          <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-transparent to-emerald-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
-          {/* File Drop Zone */}
-          <div
-            className={`
-            border-2 border-dashed rounded-xl p-6 md:p-8 flex flex-col items-center justify-center text-center cursor-pointer
-            transition-all duration-300
-            ${dragOver
-                ? "border-blue-400 bg-blue-500/10 scale-[1.01]"
-                : file
-                  ? "border-emerald-500/50 bg-emerald-500/5"
-                  : "border-[var(--border)] hover:border-blue-500/40 hover:bg-blue-500/5"
-              }
-          `}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={onDrop}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,application/pdf,.docx,.drawio,.xml"
-              className="hidden"
-              onChange={onFileChange}
-            />
+        {/* Right Side: The Engine / Dropzone */}
+        <div className="w-full lg:w-[55%] xl:w-[60%] flex items-center justify-center p-4 md:p-8 xl:p-12 relative bg-surface/30 z-10">
+           {/* Tech Corners */}
+           <div className="absolute top-8 left-8 w-4 h-4 border-t border-l border-primary/40 hidden md:block"></div>
+           <div className="absolute top-8 right-8 w-4 h-4 border-t border-r border-primary/40 hidden md:block"></div>
+           <div className="absolute bottom-8 left-8 w-4 h-4 border-b border-l border-primary/40 hidden md:block"></div>
+           <div className="absolute bottom-8 right-8 w-4 h-4 border-b border-r border-primary/40 hidden md:block"></div>
 
-            {file ? (
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 flex items-center justify-center">
-                  <svg
-                    className="w-8 h-8 text-emerald-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
+           <div className="w-full max-w-2xl bg-surface border border-border shadow-sm p-4 md:p-5 animate-slide-up relative">
+             {/* Fake window controls to look like a terminal/tool */}
+             <div className="flex items-center gap-2 mb-4 border-b border-border pb-3">
+                <div className="w-2.5 h-2.5 rounded-full bg-border"></div>
+                <div className="w-2.5 h-2.5 rounded-full bg-border"></div>
+                <div className="w-2.5 h-2.5 rounded-full bg-border"></div>
+                <div className="ml-auto text-xs font-mono text-slate-400 uppercase tracking-widest">Input.sys</div>
+             </div>
+
+             {/* File Drop Zone */}
+             <div
+              className={`
+              relative w-full border border-dashed flex flex-col items-center justify-center text-center cursor-pointer transition-colors overflow-hidden
+              ${dragOver
+                  ? "border-primary bg-primary/5 p-6 md:p-8"
+                  : file
+                    ? "border-emerald-500/40 bg-emerald-500/5 p-1"
+                    : "border-border hover:border-slate-400 dark:hover:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50 p-6 md:p-8"
+                }
+            `}
+              style={{ minHeight: file ? '200px' : 'auto' }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,application/pdf,.docx,.drawio,.xml"
+                className="hidden"
+                onChange={onFileChange}
+              />
+
+              {file ? (
+                <div className="flex flex-col items-center justify-center animate-fade-in w-full h-[15rem] relative group">
+                  {file.type.startsWith("image/") ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={URL.createObjectURL(file)} alt="Preview" className="w-full h-full object-contain p-2" />
+                      <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-background/90 via-background/60 to-transparent flex flex-col items-center justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                        <p className="font-bold text-emerald-400 text-sm font-mono truncate max-w-[90%]">{file.name}</p>
+                        <p className="text-slate-300 text-[10px] uppercase mt-1 font-mono">
+                          {formatSize(file.size)} &middot; Click to replace
+                        </p>
+                      </div>
+                      
+                      {/* Always visible label on top */}
+                      <div className="absolute top-2 left-2 bg-emerald-500/10 border border-emerald-500/30 backdrop-blur-md px-2 py-1 flex items-center gap-1.5 rounded-sm">
+                        <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
+                        <span className="text-[9px] uppercase font-mono tracking-widest text-emerald-500 font-bold">Image Verified</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center gap-3 w-full">
+                      <div className="w-12 h-12 bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center relative">
+                        <div className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-500"></div>
+                        <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground text-sm font-mono truncate max-w-[200px]">{file.name}</p>
+                        <p className="text-slate-500 text-[10px] uppercase mt-1 font-mono">
+                          {formatSize(file.size)} &middot; Click to replace
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <p className="font-semibold text-white text-lg">{file.name}</p>
-                  <p className="text-slate-400 text-sm mt-1">
-                    {formatSize(file.size)} &middot; Click or drag to replace
-                  </p>
+              ) : (
+                <div className="flex flex-col items-center gap-4">
+                  <div className="w-12 h-12 border border-slate-300 dark:border-slate-600 flex items-center justify-center relative">
+                    <div className="absolute top-0 w-1 h-full bg-background hidden"></div>
+                    <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                   </div>
+                  <div>
+                    <p className="text-foreground font-medium text-sm font-mono mb-1">
+                      Drag Architecture File
+                    </p>
+                    <p className="text-slate-500 text-xs font-mono">
+                       PNG, JPG, SVG, Draw.io (.xml)
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-4">
-                <div className="w-16 h-16 rounded-2xl bg-blue-500/10 flex items-center justify-center">
-                  <svg
-                    className="w-8 h-8 text-blue-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                    />
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-white font-semibold text-lg mb-1">
-                    Drag & drop your diagram
-                  </p>
-                  <p className="text-slate-400 text-sm">
-                    Supports PNG, JPG, SVG, and Draw.io (.drawio, .xml)
-                  </p>
-                </div>
+              )}
+            </div>
+
+            {error && (
+              <div className="mt-4 flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 p-3 text-xs font-mono">
+                <span>[ERROR]</span> {error}
               </div>
             )}
-          </div>
 
-          {/* Global Configuration */}
-          <div className="flex flex-col gap-4 mt-6 border-t border-slate-800/60 pt-5">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-widest w-36 shrink-0">
-                Cloud Provider
+            {/* Cloud Provider Select */}
+            <div className="mt-4 flex flex-col gap-2">
+              <label className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">
+                Target Environment
               </label>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-3 gap-3">
                 {CLOUD_PROVIDERS.map((p) => (
                   <button
                     key={p}
-                    type="button"
                     onClick={() => setProvider(p)}
-                    className={`select-btn ${provider === p ? "active" : ""}`}
+                    className={`relative flex items-center justify-center gap-3 px-4 py-3.5 rounded-lg border font-mono transition-all cursor-pointer overflow-hidden group
+                      ${provider === p 
+                          ? "border-primary bg-primary/10 text-primary shadow-[0_0_15px_rgba(37,99,235,0.15)]" 
+                          : "border-border bg-surface text-slate-500 dark:text-slate-400 hover:border-slate-400 hover:text-foreground hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                      }
+                    `}
                   >
-                    <div className="w-7 h-7 rounded-lg bg-white flex items-center justify-center shrink-0 p-1 shadow-inner">
-                      <img
-                        src={`/${p.toLowerCase()}.png`}
-                        alt={p}
-                        className={`w-full h-full object-contain transition-all duration-300 ${provider === p ? "scale-110" : "opacity-90 hover:opacity-100"}`}
-                      />
+                    <div className="bg-white rounded-md border border-slate-200/50 p-2 flex items-center justify-center shrink-0 w-10 h-10 overflow-hidden shadow-sm">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={`/${p.toLowerCase()}.png`} alt={p} className="w-full h-full object-contain transition-transform group-hover:scale-110" />
                     </div>
-                    <span className="truncate">{p}</span>
+                    <span className="font-bold tracking-widest text-sm">{p}</span>
+                    
+                    {provider === p && (
+                       <div className="absolute top-1 right-1 w-1 h-1 rounded-full bg-primary shadow-[0_0_8px_var(--primary-glow)]"></div>
+                    )}
                   </button>
                 ))}
               </div>
             </div>
-          </div>
 
-          {/* Error State */}
-          {error && (
-            <div className="mt-6 flex items-start gap-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl p-4 text-sm animate-fade-in">
-              <svg
-                className="w-5 h-5 mt-0.5 shrink-0"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              {error}
-            </div>
-          )}
-
-          {/* Distributed Action Zones */}
-          <div className="mt-6 space-y-4">
-
-            {/* Action 1: Interactive Analysis */}
-            <div className="p-4 border border-blue-500/20 bg-blue-500/5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-slide-up">
-              <div>
-                <h3 className="text-white font-semibold flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-500" />
-                  Interactive Analysis
-                </h3>
-                <p className="text-slate-400 text-sm mt-1">Unlock AI cost modeling, security hotspots, and Terraform.</p>
-              </div>
-
-              <button
-                onClick={handleInteractive}
-                disabled={!file || loading}
-                className="w-full sm:w-auto relative overflow-hidden bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg group shrink-0"
-                style={{
-                  boxShadow:
-                    file && !loading
-                      ? "0 0 30px rgba(59,130,246,0.3)"
-                      : undefined,
-                }}
-              >
-                {loading ? (
-                  <>
-                    <Spinner />
-                    <span>Analyzing...</span>
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 01-2-2h-2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                    </svg>
-                    <span>Launch Dashboard</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Action 2: Diagram Builder */}
-            <div className="p-4 border border-emerald-500/20 bg-emerald-500/5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-slide-up" style={{ animationDelay: '100ms' }}>
-              <div>
-                <h3 className="text-white font-semibold flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  Diagram Builder
-                </h3>
-                <p className="text-slate-400 text-sm mt-1">Design with a professional draw.io editor, generate diagrams with AI, then analyze.</p>
-              </div>
-
-              <Link
-                href="/builder"
-                className="w-full sm:w-auto relative overflow-hidden bg-white/5 hover:bg-white/10 border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 font-semibold py-3 px-6 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg group shrink-0"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-                <span>Open Builder</span>
-              </Link>
-            </div>
-
-          </div>
-
-          {/* Footer hint */}
-          <p className="text-center text-slate-500 text-xs mt-6">
-            Your diagrams are analyzed privately. No data is stored.
-          </p>
+            <button
+              onClick={handleInteractive}
+              disabled={!file || loading}
+              className="mt-6 w-full btn-primary h-12 font-mono uppercase tracking-widest text-sm relative overflow-hidden flex items-center justify-center shadow-[0_0_15px_var(--primary-glow)] group"
+            >
+              {loading ? (
+                <>
+                  <Spinner />
+                  <span className="opacity-90">Executing Analysis...</span>
+                </>
+              ) : (
+                <>
+                  <span>Initialize Compilation</span>
+                  <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                  </svg>
+                </>
+              )}
+            </button>
+           </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
 
 function Spinner() {
   return (
-    <svg
-      className="animate-spin w-4 h-4 shrink-0"
-      fill="none"
-      viewBox="0 0 24 24"
-    >
-      <circle
-        className="opacity-25"
-        cx="12"
-        cy="12"
-        r="10"
-        stroke="currentColor"
-        strokeWidth="4"
-      />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-      />
+    <svg className="animate-spin w-4 h-4 shrink-0 mr-2" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
   );
 }
